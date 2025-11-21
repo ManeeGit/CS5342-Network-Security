@@ -1,0 +1,187 @@
+﻿%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#4A90E2','primaryTextColor':'#fff','primaryBorderColor':'#2C5282','lineColor':'#4A5568','secondaryColor':'#48BB78','tertiaryColor':'#F6AD55'}}}%%
+
+graph TB
+    %% =================================================================
+    %% USER INTERACTION LAYER
+    %% =================================================================
+    
+    USER([User Browser<br/>localhost:8501])
+    
+    style USER fill:#667EEA,stroke:#5A67D8,stroke-width:4px,color:#fff,font-size:16px
+    
+    %% =================================================================
+    %% STREAMLIT UI LAYER
+    %% =================================================================
+    
+    subgraph UI_LAYER["  STREAMLIT UI LAYER  "]
+        direction LR
+        
+        QUIZ_MODE["QUIZ MODE<br/><br/> Topic Input<br/> Question Count<br/> MCQ Form<br/> Auto Grading"]
+        
+        TUTOR_MODE["TUTOR MODE<br/><br/> Question Input<br/> Detailed Explanation<br/> Source Citations<br/> Content Preview"]
+        
+        style QUIZ_MODE fill:#48BB78,stroke:#38A169,stroke-width:3px,color:#fff,font-size:14px
+        style TUTOR_MODE fill:#4299E1,stroke:#3182CE,stroke-width:3px,color:#fff,font-size:14px
+    end
+    
+    style UI_LAYER fill:#EDF2F7,stroke:#4A5568,stroke-width:3px,stroke-dasharray: 5 5
+    
+    %% =================================================================
+    %% SEARCH & RETRIEVAL LAYER
+    %% =================================================================
+    
+    subgraph SEARCH_LAYER["  CONTEXT RETRIEVAL LAYER  "]
+        direction TB
+        
+        QUERY_INPUT{{" Query/Topic<br/>Processing"}}
+        
+        subgraph LOCAL_SEARCH["LOCAL KNOWLEDGE BASE"]
+            direction TB
+            VECTOR_DB[("ChromaDB<br/><br/> HNSW Index<br/> 1072 Documents<br/> Cosine Similarity<br/> Default Embeddings")]
+            SEARCH_SCORE{"Relevance Score<br/>threshold: 0.4"}
+            
+            style VECTOR_DB fill:#F6E05E,stroke:#D69E2E,stroke-width:3px,color:#000,font-size:13px
+            style SEARCH_SCORE fill:#FED7D7,stroke:#FC8181,stroke-width:2px,color:#000
+        end
+        
+        subgraph WEB_FALLBACK["WEB SEARCH FALLBACK"]
+            direction TB
+            DUCKGO[" DuckDuckGo<br/><br/>Max Results: 5<br/>Score: 0.8"]
+            WIKI[" Wikipedia<br/><br/>Max Articles: 3<br/>Score: 0.9"]
+            
+            style DUCKGO fill:#90CDF4,stroke:#4299E1,stroke-width:2px,color:#000,font-size:13px
+            style WIKI fill:#90CDF4,stroke:#4299E1,stroke-width:2px,color:#000,font-size:13px
+        end
+        
+        CONTEXT_READY[[" Context Ready<br/>text + source + page + score"]]
+        
+        style QUERY_INPUT fill:#C3DAFE,stroke:#667EEA,stroke-width:3px,color:#000,font-size:14px
+        style CONTEXT_READY fill:#C6F6D5,stroke:#48BB78,stroke-width:3px,color:#000,font-size:13px
+    end
+    
+    style SEARCH_LAYER fill:#F7FAFC,stroke:#2D3748,stroke-width:3px,stroke-dasharray: 5 5
+    style LOCAL_SEARCH fill:#FEFCBF,stroke:#D69E2E,stroke-width:2px,stroke-dasharray: 3 3
+    style WEB_FALLBACK fill:#BEE3F8,stroke:#3182CE,stroke-width:2px,stroke-dasharray: 3 3
+    
+    %% =================================================================
+    %% GENERATION LAYER
+    %% =================================================================
+    
+    subgraph GEN_LAYER["  INTELLIGENT GENERATION LAYER  "]
+        direction TB
+        
+        PROMPT_BUILD[" Prompt Engineering<br/><br/>Context + Instructions"]
+        
+        LLM_CHECK{" Ollama<br/>Available?"}
+        
+        subgraph LLM_PATH["AI GENERATION PATH"]
+            direction TB
+            OLLAMA[" OLLAMA LLM<br/><br/>Model: qwen2.5:7b-instruct<br/>Temp: 0.7 | Tokens: 2000<br/>Timeout: 120s"]
+            PARSE[" Response Parser<br/><br/>Extract Q&A<br/>Format Citations"]
+            
+            style OLLAMA fill:#FC8181,stroke:#E53E3E,stroke-width:3px,color:#fff,font-size:13px
+            style PARSE fill:#FBD38D,stroke:#ED8936,stroke-width:2px,color:#000
+        end
+        
+        subgraph FALLBACK_PATH["FALLBACK PATH"]
+            TEMPLATE[" Template Mode<br/><br/>Extract from Context<br/>Basic Formatting"]
+            
+            style TEMPLATE fill:#CBD5E0,stroke:#718096,stroke-width:2px,color:#000,font-size:13px
+        end
+        
+        RESPONSE_OUT[[" Final Response<br/>Content + Citations + Sources"]]
+        
+        style PROMPT_BUILD fill:#D6BCFA,stroke:#9F7AEA,stroke-width:2px,color:#000,font-size:13px
+        style LLM_CHECK fill:#FED7D7,stroke:#FC8181,stroke-width:3px,color:#000
+        style RESPONSE_OUT fill:#C6F6D5,stroke:#48BB78,stroke-width:3px,color:#000,font-size:13px
+    end
+    
+    style GEN_LAYER fill:#FAF5FF,stroke:#553C9A,stroke-width:3px,stroke-dasharray: 5 5
+    style LLM_PATH fill:#FED7E2,stroke:#D53F8C,stroke-width:2px,stroke-dasharray: 3 3
+    style FALLBACK_PATH fill:#E2E8F0,stroke:#4A5568,stroke-width:2px,stroke-dasharray: 3 3
+    
+    %% =================================================================
+    %% DATA INGESTION PIPELINE
+    %% =================================================================
+    
+    subgraph INGESTION["  DATA INGESTION PIPELINE  "]
+        direction LR
+        
+        PDF_SOURCE[(" Source PDFs<br/><br/>71 Documents")]
+        PDF_EXTRACT[" PyMuPDF Extractor<br/><br/>Page-by-Page<br/>Text Extraction"]
+        MD_PROCESS[" Markdown Conversion<br/><br/>processed_docs/<br/>71 .md files"]
+        CHUNKING[" Chunking & Embedding<br/><br/>Batch: 100 docs<br/>Metadata: source + page"]
+        
+        style PDF_SOURCE fill:#FC8181,stroke:#E53E3E,stroke-width:2px,color:#fff,font-size:12px
+        style PDF_EXTRACT fill:#F6AD55,stroke:#DD6B20,stroke-width:2px,color:#000,font-size:12px
+        style MD_PROCESS fill:#68D391,stroke:#38A169,stroke-width:2px,color:#000,font-size:12px
+        style CHUNKING fill:#63B3ED,stroke:#3182CE,stroke-width:2px,color:#000,font-size:12px
+    end
+    
+    style INGESTION fill:#FFFAF0,stroke:#C05621,stroke-width:3px,stroke-dasharray: 5 5
+    
+    %% =================================================================
+    %% MAIN FLOW CONNECTIONS
+    %% =================================================================
+    
+    USER ==>|"HTTP Request"| QUIZ_MODE
+    USER ==>|"HTTP Request"| TUTOR_MODE
+    
+    QUIZ_MODE -->|"Topic + Settings"| QUERY_INPUT
+    TUTOR_MODE -->|"Question"| QUERY_INPUT
+    
+    QUERY_INPUT -->|"Semantic Search"| VECTOR_DB
+    VECTOR_DB --> SEARCH_SCORE
+    
+    SEARCH_SCORE -->|"Score  0.4<br/> Good Match"| CONTEXT_READY
+    SEARCH_SCORE -->|"Score < 0.4<br/> Weak Match"| DUCKGO
+    
+    DUCKGO -->|"Success"| CONTEXT_READY
+    DUCKGO -->|"Fail"| WIKI
+    WIKI -->|"Success/Fail"| CONTEXT_READY
+    
+    CONTEXT_READY --> PROMPT_BUILD
+    PROMPT_BUILD --> LLM_CHECK
+    
+    LLM_CHECK -->|" Running"| OLLAMA
+    LLM_CHECK -->|" Offline"| TEMPLATE
+    
+    OLLAMA --> PARSE
+    PARSE --> RESPONSE_OUT
+    TEMPLATE --> RESPONSE_OUT
+    
+    RESPONSE_OUT ==>|"Render UI"| QUIZ_MODE
+    RESPONSE_OUT ==>|"Render UI"| TUTOR_MODE
+    
+    QUIZ_MODE -.->|"Display"| USER
+    TUTOR_MODE -.->|"Display"| USER
+    
+    %% =================================================================
+    %% DATA PIPELINE CONNECTIONS
+    %% =================================================================
+    
+    PDF_SOURCE -->|"Load"| PDF_EXTRACT
+    PDF_EXTRACT -->|"Convert"| MD_PROCESS
+    MD_PROCESS -->|"Process"| CHUNKING
+    CHUNKING ==>|"Store Vectors"| VECTOR_DB
+    
+    %% =================================================================
+    %% LEGEND
+    %% =================================================================
+    
+    subgraph LEGEND["  LEGEND  "]
+        direction LR
+        L1[" Primary Path"]
+        L2[" Fallback Path"]
+        L3[" Error Path"]
+        L4[" Real-time"]
+        L5[" Batch Process"]
+        
+        style L1 fill:#C6F6D5,stroke:#38A169,stroke-width:2px
+        style L2 fill:#FED7D7,stroke:#FC8181,stroke-width:2px
+        style L3 fill:#FED7E2,stroke:#E53E3E,stroke-width:2px
+        style L4 fill:#BEE3F8,stroke:#3182CE,stroke-width:2px
+        style L5 fill:#FEEBC8,stroke:#DD6B20,stroke-width:2px
+    end
+    
+    style LEGEND fill:#F7FAFC,stroke:#2D3748,stroke-width:2px
