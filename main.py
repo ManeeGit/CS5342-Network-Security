@@ -173,35 +173,41 @@ def search_wikipedia(query):
 
 
 def search_web(query):
-    """Fallback web search - tries DuckDuckGo then Wikipedia"""
+    """Comprehensive web search - fetches from internet using DuckDuckGo"""
     
-    # Try DuckDuckGo first
+    web_results = []
+    
+    # Try DuckDuckGo text search
     try:
+        st.info("Searching the internet...")
         with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=5))
+            results = list(ddgs.text(query, max_results=10))
             
             if results:
-                web_results = []
                 for r in results:
                     content = f"{r.get('title', '')}\n\n{r.get('body', '')}"
                     web_results.append({
                         'text': content,
                         'source': r.get('href', 'Unknown'),
-                        'page': 'Web',
-                        'score': 0.8
+                        'page': 'Web Search',
+                        'score': 0.85
                     })
-                return web_results
-    except:
-        pass
+                
+                if web_results:
+                    st.success(f"Found {len(web_results)} results from internet")
+                    return web_results
+    except Exception as e:
+        st.warning(f"DuckDuckGo search error: {str(e)[:100]}")
     
-    # Fallback to Wikipedia
-    st.info("Searching Wikipedia...")
+    # If DuckDuckGo fails, try Wikipedia as last resort
+    st.info("Trying Wikipedia as fallback...")
     wiki_results = search_wikipedia(query)
     
     if wiki_results:
+        st.success(f"Found {len(wiki_results)} results from Wikipedia")
         return wiki_results
     
-    st.error("All web search methods failed")
+    st.error("All internet search methods failed")
     return []
 
 
