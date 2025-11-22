@@ -38,6 +38,9 @@ Thumbs.db
 *.gguf
 .cache/
 
+# Vector Database
+vectordb/
+
 # Logs
 *.log
 
