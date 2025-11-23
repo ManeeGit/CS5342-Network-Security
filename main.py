@@ -485,10 +485,16 @@ def create_template_open(topic, context):
 
     # Choose candidate keyword: prefer long/technical words, else longest word, else topic
     words = re.findall(r"\w+", sent)
-    candidates = [w for w in words if len(w) > 5]
+    # Prefer candidates not in the first two tokens to avoid leading blanks
+    candidates = [w for idx, w in enumerate(words) if len(w) > 5 and idx > 1]
+    if not candidates:
+        # relax to any long words
+        candidates = [w for w in words if len(w) > 5]
     if candidates:
+        # prefer the first mid-sentence candidate
         keyword = candidates[0]
     elif words:
+        # pick the longest word as fallback
         keyword = max(words, key=len)
     else:
         keyword = (topic.split()[0] if topic and len(topic.split()) > 0 else 'answer')
@@ -504,8 +510,12 @@ def create_template_open(topic, context):
     except Exception:
         sentence_with_blank = sent + ' ____'
 
-    # Build the question including a clear citation
-    question = f"Fill in the blank: {sentence_with_blank} (See: {c.get('source','Unknown')}, p.{c.get('page','N/A')})"
+    # If the blank is at the very start or results in an unhelpful fragment,
+    # rephrase to include the full sentence for context
+    if sentence_with_blank.strip().startswith('____') or len(sentence_with_blank.split()) < 4:
+        question = f"Fill in the blank: In the sentence '{sent}', the missing term is: ____ (See: {c.get('source','Unknown')}, p.{c.get('page','N/A')})"
+    else:
+        question = f"Fill in the blank: {sentence_with_blank} (See: {c.get('source','Unknown')}, p.{c.get('page','N/A')})"
 
     return {
         'question': question,
