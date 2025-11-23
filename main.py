@@ -772,7 +772,8 @@ def main():
                 for i, q in enumerate(quiz):
                     q_type = q.get('type', 'MCQ')
                     st.markdown(f"### Question {i+1} ({q_type})")
-                    st.markdown(f"**{q['question']}**")
+                    # Display question text without extra markdown formatting
+                    st.write(q['question'])
                     
                     if q_type == 'FIB':
                         # Fill-in-the-blank: text input
