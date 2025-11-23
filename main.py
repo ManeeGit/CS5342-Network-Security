@@ -511,11 +511,11 @@ def create_template_open(topic, context):
         sentence_with_blank = sent + ' ____'
 
     # If the blank is at the very start or results in an unhelpful fragment,
-    # rephrase to include the full sentence for context
+    # rephrase to include the full sentence for context; do NOT include inline filename citation
     if sentence_with_blank.strip().startswith('____') or len(sentence_with_blank.split()) < 4:
-        question = f"Fill in the blank: In the sentence '{sent}', the missing term is: ____ (See: {c.get('source','Unknown')}, p.{c.get('page','N/A')})"
+        question = f"Fill in the blank: In the sentence '{sent}', the missing term is: ____"
     else:
-        question = f"Fill in the blank: {sentence_with_blank} (See: {c.get('source','Unknown')}, p.{c.get('page','N/A')})"
+        question = f"Fill in the blank: {sentence_with_blank}"
 
     return {
         'question': question,
