@@ -423,9 +423,12 @@ Now generate the quiz strictly in that format:
 def create_template_quiz(topic, context, num_q):
     """Generate quiz from context content"""
     quiz = []
+    context_idx = 0
     
-    for i in range(min(num_q, len(context))):
-        ctx = context[i]
+    while len(quiz) < num_q and context_idx < len(context):
+        ctx = context[context_idx]
+        context_idx += 1
+        
         raw_text = ctx.get('text', '')
         text = sanitize_text(raw_text)
         
@@ -458,20 +461,53 @@ def create_template_quiz(topic, context, num_q):
             ,'type': 'mcq'
         })
     
-    return quiz if quiz else [{
-        'question': f"What information is available about {topic}?",
-        'options': [
-            f"A) {context[0]['text'][:150]}...",
-            "B) No information found",
-            "C) Conflicting information",
-            "D) Unclear from sources"
-        ],
-        'correct': 'A',
-        'explanation': f"See {context[0].get('source','Unknown')}, page {context[0].get('page','N/A')}",
-        'source': context[0].get('source','Unknown'),
-        'page': context[0].get('page','N/A')
-        ,'type': 'mcq'
-    }]
+    # If no quiz generated, create a fallback question
+    if not quiz:
+        quiz = [{
+            'question': f"What information is available about {topic}?",
+            'options': [
+                f"A) {sanitize_text(context[0].get('text','')[:150])}...",
+                "B) No information found",
+                "C) Conflicting information",
+                "D) Unclear from sources"
+            ],
+            'correct': 'A',
+            'explanation': f"See {context[0].get('source','Unknown')}, page {context[0].get('page','N/A')}",
+            'source': context[0].get('source','Unknown'),
+            'page': context[0].get('page','N/A'),
+            'type': 'mcq'
+        }]
+    
+    # Ensure at least 2 TF and 1 open if num_q allows
+    if num_q >= 3:
+        tf_count = sum(1 for q in quiz if q.get('type') == 'tf')
+        open_count = sum(1 for q in quiz if q.get('type') == 'open')
+        
+        # Add required TF questions
+        while tf_count < 2 and len(quiz) < num_q:
+            quiz.append(create_template_tf(context))
+            tf_count += 1
+        
+        # Add required open question
+        if open_count < 1 and len(quiz) < num_q:
+            quiz.append(create_template_open(topic, context))
+    
+    # Trim to exactly num_q if we exceeded
+    if len(quiz) > num_q:
+        # Prioritize keeping required types (2 TF, 1 open)
+        tf_questions = [q for q in quiz if q.get('type') == 'tf']
+        open_questions = [q for q in quiz if q.get('type') == 'open']
+        mcq_questions = [q for q in quiz if q.get('type') == 'mcq']
+        
+        # Keep at least 2 TF and 1 open, fill rest with MCQ
+        final = []
+        final.extend(tf_questions[:2])
+        final.extend(open_questions[:1])
+        remaining = num_q - len(final)
+        final.extend(mcq_questions[:remaining])
+        quiz = final
+    
+    return quiz
 
 
 def create_template_tf(context):
