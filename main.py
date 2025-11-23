@@ -298,16 +298,17 @@ CONTEXT:
 CRITICAL RULES:
 1. Extract SPECIFIC facts, definitions, and technical details from the context
 2. Use EXACT terminology and numbers from the sources
-3. Create CLEAR, UNAMBIGUOUS questions
+3. Create CLEAR, UNAMBIGUOUS questions WITHOUT mentioning source names in the question text
 4. Make wrong options plausible but clearly incorrect
-5. For True/False: use complete factual statements from the context
-6. For Fill-in-the-blank: remove ONE key technical term or number
+5. For True/False: use complete factual statements WITHOUT source references in the statement
+6. For Fill-in-the-blank: create natural sentences WITHOUT mentioning sources
+7. Keep source references ONLY in explanations, NOT in questions
 
 GENERATE {num_mcq} multiple choice, {num_tf} true/false, and {num_fib} fill-in-the-blank question.
 
 FORMAT FOR MULTIPLE CHOICE:
 QUESTION [number]: MCQ
-What is [specific technical aspect] of {topic}?
+What is [specific technical aspect] of {topic}? [DO NOT mention sources here]
 A) [Correct answer with specific details from context]
 B) [Plausible wrong answer]
 C) [Plausible wrong answer]
@@ -319,7 +320,7 @@ EXPLANATION: According to [Source], page [X]: [Quote the relevant sentence]
 
 FORMAT FOR TRUE/FALSE:
 QUESTION [number]: TF
-[Complete factual statement extracted directly from the context]
+[Complete factual statement - NO source mentions in the statement itself]
 A) True
 B) False
 CORRECT: A
@@ -329,7 +330,7 @@ EXPLANATION: This is true according to [Source], page [X]: [Quote supporting tex
 
 FORMAT FOR FILL-IN-THE-BLANK:
 QUESTION [number]: FIB
-[Copy a sentence from context but replace ONE key technical term with _____]
+[Natural sentence with _____ for the blank - NO source mentions in the sentence]
 CORRECT: [The exact term that was removed]
 EXPLANATION: Complete sentence from [Source], page [X]: [Full original sentence]
 
@@ -393,15 +394,15 @@ def create_template_quiz(topic, context, num_q):
         key_terms = [w for w in words if len(w) > 4 and w[0].isupper()]
         topic_word = key_terms[0] if key_terms else topic
         
-        # Create specific question
-        question = f"Based on {ctx['source']} (page {ctx['page']}), which statement about {topic} is correct?"
+        # Create specific question without source reference
+        question = f"Which statement about {topic} is correct?"
         
         # Create more realistic options
         options = [
             f"A) {main_fact}",
-            f"B) {topic} is not mentioned in the security literature",
+            f"B) {topic} is not mentioned in security literature",
             f"C) {topic} has been deprecated and is no longer used",
-            f"D) The documentation provides contradictory information about {topic}"
+            f"D) {topic} is only used in legacy systems"
         ]
         
         quiz.append({
