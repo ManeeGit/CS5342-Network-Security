@@ -373,7 +373,7 @@ Now generate the quiz strictly in that format:
     num_open = min(1, num_q - num_tf)  # At least 1 open question
     num_mcq = num_q - num_tf - num_open  # Rest are MCQ
     
-    # Generate True/False questions
+    # Generate True/False questions (always generate num_tf questions)
     for i in range(num_tf):
         if i < len(concepts):
             c = concepts[i]
@@ -386,8 +386,11 @@ Now generate the quiz strictly in that format:
                 'page': c['page'],
                 'type': 'tf'
             })
+        else:
+            # Fallback: create TF from template
+            quiz.append(create_template_tf(context))
     
-    # Generate MCQ questions
+    # Generate MCQ questions (always generate num_mcq questions)
     mcq_start = num_tf
     for i in range(num_mcq):
         idx = mcq_start + i
@@ -415,16 +418,21 @@ Now generate the quiz strictly in that format:
                 'page': c['page'],
                 'type': 'mcq'
             })
-    
-    # Generate open-ended question
-    for i in range(num_open):
-        idx = mcq_start + num_mcq + i
-        if idx < len(concepts):
-            quiz.append(create_template_open(topic, context))
         else:
-            quiz.append(create_template_open(topic, context))
+            # Fallback: create MCQ from template
+            temp_mcq = create_template_quiz(topic, context, 1)
+            if temp_mcq:
+                quiz.append(temp_mcq[0])
     
-    # Try LLM enhancement if available
+    # Generate open-ended question (always generate num_open questions)
+    for i in range(num_open):
+        quiz.append(create_template_open(topic, context))
+    
+    # At this point, quiz should have exactly num_q questions
+    if len(quiz) == num_q:
+        return quiz
+    
+    # Try LLM enhancement if available and we still need more
     ollama_available = check_ollama()
     
     if ollama_available and len(quiz) < num_q:
