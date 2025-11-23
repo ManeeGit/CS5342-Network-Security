@@ -409,6 +409,28 @@ Now generate the quiz strictly in that format:
                     else:
                         cleaned.append(q)
 
+                # Ensure we have exactly num_q questions
+                if len(cleaned) > num_q:
+                    # Trim excess while keeping required types
+                    tf_qs = [q for q in cleaned if q.get('type') == 'tf']
+                    open_qs = [q for q in cleaned if q.get('type') == 'open']
+                    mcq_qs = [q for q in cleaned if q.get('type') == 'mcq']
+                    
+                    final = []
+                    final.extend(tf_qs[:2])  # Keep 2 TF
+                    final.extend(open_qs[:1])  # Keep 1 open
+                    remaining = num_q - len(final)
+                    final.extend(mcq_qs[:remaining])  # Fill rest with MCQ
+                    cleaned = final
+                elif len(cleaned) < num_q:
+                    # Pad with additional MCQs from template
+                    needed = num_q - len(cleaned)
+                    extra_mcqs = create_template_quiz(topic, context, needed)
+                    for extra in extra_mcqs[:needed]:
+                        if extra.get('type') != 'tf' and extra.get('type') != 'open':
+                            extra['type'] = 'mcq'
+                    cleaned.extend(extra_mcqs[:needed])
+
                 return cleaned
             else:
                 st.warning("Failed to parse LLM output. Using template quiz.")
