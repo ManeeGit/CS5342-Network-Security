@@ -483,24 +483,32 @@ def create_template_open(topic, context):
         # fallback to source or topic
         sent = c.get('source', '') or topic or 'Complete the following'
 
-    # Choose candidate keyword: prefer long/technical words, else longest word, else topic
+
+    # Choose candidate phrase: prefer multi-word technical phrases (2-3 words) located after first two tokens
     words = re.findall(r"\w+", sent)
-    # Prefer candidates not in the first two tokens to avoid leading blanks
-    candidates = [w for idx, w in enumerate(words) if len(w) > 5 and idx > 1]
-    if not candidates:
-        # relax to any long words
-        candidates = [w for w in words if len(w) > 5]
-    if candidates:
-        # prefer the first mid-sentence candidate
-        keyword = candidates[0]
-    elif words:
-        # pick the longest word as fallback
-        keyword = max(words, key=len)
-    else:
-        keyword = (topic.split()[0] if topic and len(topic.split()) > 0 else 'answer')
+    keyword = None
+    # search for 3-word then 2-word windows where words are reasonably long
+    for window in (3, 2):
+        for i in range(2, max(0, len(words) - window + 1)):
+            w = words[i:i+window]
+            if all(len(x) > 3 for x in w) and any(len(x) > 5 for x in w):
+                keyword = ' '.join(w)
+                break
+        if keyword:
+            break
+
+    # fallback to single long word (not in first two tokens)
+    if not keyword:
+        candidates = [w for idx, w in enumerate(words) if idx > 1 and len(w) > 5]
+        if candidates:
+            keyword = candidates[0]
+        elif words:
+            keyword = max(words, key=len)
+        else:
+            keyword = (topic.split()[0] if topic and len(topic.split()) > 0 else 'answer')
 
     # Avoid numeric or trivial keyword
-    if keyword.isdigit() or len(keyword) < 2:
+    if isinstance(keyword, str) and (keyword.isdigit() or len(keyword) < 2):
         keyword = (topic.split()[0] if topic else 'answer')
 
     # Replace only first occurrence (case-insensitive), safe fallback
@@ -827,7 +835,12 @@ def main():
                         st.session_state.quiz = quiz
                         st.session_state.quiz_context = context
                         st.session_state.src_type = src_type
-                        st.session_state.user_answers = {}  # Reset answers
+                        # Reset answers and any previous question widgets to avoid retained selections
+                        st.session_state.user_answers = {}
+                        # Remove any keys that start with quiz question widget prefixes
+                        keys_to_remove = [k for k in list(st.session_state.keys()) if str(k).startswith('q_')]
+                        for k in keys_to_remove:
+                            del st.session_state[k]
                         st.rerun()
         
         # Display quiz if available (OUTSIDE button condition)
@@ -907,9 +920,13 @@ def main():
                         st.markdown(f"- **{c['source']}** (Page {c['page']})")
             
             if st.button("New Quiz"):
+                # Clear main quiz state and any question widget keys
                 for key in ['quiz', 'quiz_context', 'user_answers', 'src_type']:
                     if key in st.session_state:
                         del st.session_state[key]
+                keys_to_remove = [k for k in list(st.session_state.keys()) if str(k).startswith('q_')]
+                for k in keys_to_remove:
+                    del st.session_state[k]
                 st.rerun()
     
     # Tutor Mode
