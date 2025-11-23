@@ -296,11 +296,35 @@ def generate_with_ollama(prompt, model="qwen2.5:7b-instruct"):
 # Quiz Generation
 # ============================================================================
 
+def extract_key_concepts(context, topic):
+    """Extract key concepts and facts from context for quiz generation"""
+    concepts = []
+    for c in context[:10]:
+        text = sanitize_text(c.get('text', ''))
+        sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 20]
+        for sent in sentences[:3]:
+            if any(kw.lower() in sent.lower() for kw in topic.split()):
+                concepts.append({
+                    'sentence': sent,
+                    'source': c.get('source', 'Unknown'),
+                    'page': c.get('page', 'N/A')
+                })
+    return concepts
+
+
 def generate_quiz(topic, context, num_q=5):
-    """Generate quiz with LLM"""
+    """Generate high-quality quiz using structured approach"""
     # Ensure minimum questions to include required types
     num_q = max(num_q, 3)
-    # Build numbered context blocks so LLM can cite like [Source 1, Page X]
+    # Extract key concepts from context
+    concepts = extract_key_concepts(context, topic)
+    
+    if not concepts:
+        # Fallback to template quiz if no concepts found
+        st.warning("No relevant concepts found. Generating template quiz.")
+        return create_template_quiz(topic, context, num_q)
+    
+    # Build numbered context blocks for LLM fallback
     context_blocks = []
     for idx, c in enumerate(context[:6], start=1):
         raw = c.get('text', '') or ''
@@ -308,32 +332,8 @@ def generate_quiz(topic, context, num_q=5):
         context_blocks.append(f"[Source {idx}] {c.get('source','Unknown')}, Page {c.get('page','N/A')}:\n{excerpt}")
     context_text = "\n\n".join(context_blocks)
     
-    prompt = f"""You are a quiz generator. Based on the following context about "{topic}", create {num_q} multiple choice questions.
-
-CONTEXT:
-{context_text}
-
-INSTRUCTIONS:
-- Create exactly {num_q} questions
-- Each question must have 4 options (A, B, C, D)
-- Only ONE option should be correct
-- Provide explanation with source reference
-- Use EXACTLY this format for each question:
-
-QUESTION [number]:
-[Your question text here]
-A) [Option A]
-B) [Option B]
-C) [Option C]
-D) [Option D]
-CORRECT: [A/B/C/D]
-EXPLANATION: [Why this is correct and which page/source it comes from]
-
----
-
-Now generate the quiz:"""
-    # Improved prompt: request mixed types and strict machine-parseable format
-    prompt = f"""You are a quiz generator. Based ONLY on the CONTEXT below about \"{topic}\", produce exactly {num_q} questions. Use the context's source markers when citing.
+    # Simplified LLM prompt for better quality
+    prompt = f"""Create {num_q} quiz questions about \"{topic}\" using ONLY the context below.
 
 CONTEXT:
 {context_text}
@@ -365,10 +365,70 @@ SOURCE: [Source 1, Page X]
 Now generate the quiz strictly in that format:
 """
     
+    # Generate structured quiz from concepts
+    quiz = []
+    
+    # Calculate how many of each type we need
+    num_tf = min(2, num_q)  # At least 2 TF questions
+    num_open = min(1, num_q - num_tf)  # At least 1 open question
+    num_mcq = num_q - num_tf - num_open  # Rest are MCQ
+    
+    # Generate True/False questions
+    for i in range(num_tf):
+        if i < len(concepts):
+            c = concepts[i]
+            quiz.append({
+                'question': f"{c['sentence'].strip()}",
+                'options': ["A) True", "B) False"],
+                'correct': 'A',
+                'explanation': f"This statement is from {c['source']}, page {c['page']}.",
+                'source': c['source'],
+                'page': c['page'],
+                'type': 'tf'
+            })
+    
+    # Generate MCQ questions
+    mcq_start = num_tf
+    for i in range(num_mcq):
+        idx = mcq_start + i
+        if idx < len(concepts):
+            c = concepts[idx]
+            sent = c['sentence']
+            # Create question by asking what the statement describes
+            words = sent.split()
+            if len(words) > 10:
+                question = f"According to {c['source']}, which statement about {topic} is correct?"
+            else:
+                question = f"What does {c['source']} say about {topic}?"
+            
+            quiz.append({
+                'question': question,
+                'options': [
+                    f"A) {sent[:100]}...",
+                    "B) This is not discussed in the source",
+                    "C) The opposite is stated",
+                    "D) The source provides different information"
+                ],
+                'correct': 'A',
+                'explanation': f"See {c['source']}, page {c['page']}: {sent}",
+                'source': c['source'],
+                'page': c['page'],
+                'type': 'mcq'
+            })
+    
+    # Generate open-ended question
+    for i in range(num_open):
+        idx = mcq_start + num_mcq + i
+        if idx < len(concepts):
+            quiz.append(create_template_open(topic, context))
+        else:
+            quiz.append(create_template_open(topic, context))
+    
+    # Try LLM enhancement if available
     ollama_available = check_ollama()
     
-    if ollama_available:
-        st.info("Generating quiz with local LLM (qwen2.5:7b-instruct)...")
+    if ollama_available and len(quiz) < num_q:
+        st.info("Enhancing quiz with LLM...")
         response = generate_with_ollama(prompt)
         if response:
             parsed = parse_quiz(response, context)
