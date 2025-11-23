@@ -281,10 +281,12 @@ def generate_quiz(topic, context, num_q=5):
     """Generate quiz with LLM"""
     # Ensure minimum questions to include required types
     num_q = max(num_q, 3)
-    context_text = "\n\n".join([
-        f"[Source: {c['source']}, Page {c['page']}]\n{c['text'][:600]}"
-        for c in context[:3]
-    ])
+    # Build numbered context blocks so LLM can cite like [Source 1, Page X]
+    context_blocks = []
+    for idx, c in enumerate(context[:6], start=1):
+        excerpt = c['text'][:800].replace('\n', ' ')
+        context_blocks.append(f"[Source {idx}] {c['source']}, Page {c.get('page','N/A')}:\n{excerpt}")
+    context_text = "\n\n".join(context_blocks)
     
     prompt = f"""You are a quiz generator. Based on the following context about "{topic}", create {num_q} multiple choice questions.
 
@@ -360,7 +362,30 @@ Now generate the quiz strictly in that format:
 
                 if additions:
                     parsed.extend(additions)
-                return parsed
+
+                # Validate parsed questions: avoid options that are just filenames or source names
+                cleaned = []
+                for q in parsed:
+                    bad = False
+                    if q.get('type') == 'mcq':
+                        for opt in q.get('options', []):
+                            # if option contains 'Lecture' or 'slides' or 'Lecture_' treat as bad
+                            if any(tok.lower() in opt.lower() for tok in ['lecture', 'slides', '.pdf', 'lecture_']):
+                                bad = True
+                                break
+                    if bad:
+                        # replace with a template MCQ based on context
+                        repl = create_template_quiz(topic, context, 1)
+                        if repl:
+                            r = repl[0]
+                            r['type'] = 'mcq'
+                            cleaned.append(r)
+                        else:
+                            cleaned.append(q)
+                    else:
+                        cleaned.append(q)
+
+                return cleaned
             else:
                 st.warning("Failed to parse LLM output. Using template quiz.")
         else:
