@@ -741,11 +741,12 @@ def main():
                         ans = st.text_input(
                             "Your answer:",
                             key=f"q_{i}",
+                            value="",
                             placeholder="Type your answer here"
                         )
                         answers.append(ans)
                     else:
-                        # MCQ and TF: radio buttons
+                        # MCQ and TF: radio buttons (no default selection)
                         ans = st.radio(
                             "Select your answer:",
                             q['options'],
