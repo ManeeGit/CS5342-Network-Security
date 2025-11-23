@@ -310,6 +310,34 @@ EXPLANATION: [Why this is correct and which page/source it comes from]
 ---
 
 Now generate the quiz:"""
+    # Improved prompt: request mixed types and strict machine-parseable format
+    prompt = f"""You are a quiz generator. Based ONLY on the CONTEXT below about \"{topic}\", produce exactly {num_q} questions. Use the context's source markers when citing.
+
+CONTEXT:
+{context_text}
+
+REQUIREMENTS:
+- Produce at least 2 True/False questions (type `tf`) and at least 1 open-ended fill-in-the-blank question (type `open`) among the {num_q} questions.
+- Remaining questions may be multiple-choice (`mcq`) with four options A/B/C/D and exactly one correct answer.
+- Use ONLY information present in the CONTEXT. Do NOT invent facts.
+- For each question include an explicit TYPE line: `TYPE: mcq` or `TYPE: tf` or `TYPE: open`.
+- For `mcq` include options A) B) C) D). For `tf` include options `A) True` and `B) False`. For `open` include no options and put the expected answer in `CORRECT:` as the text answer.
+- Always include a `SOURCE:` line that cites the context like `[Source 1, Page X]` (use the source numbers provided in the CONTEXT block).
+- Follow this exact machine-parsable format for every question (no extra commentary):
+
+QUESTION [number]:
+TYPE: [mcq|tf|open]
+[Question text]
+A) [Option A]    (only for mcq or tf)
+B) [Option B]    (only for mcq or tf)
+C) [Option C]    (only for mcq)
+D) [Option D]    (only for mcq)
+CORRECT: [A/B/C/D] or for TF use A or B, for OPEN use the exact expected answer text
+EXPLANATION: [Short explanation and cite SOURCE]
+SOURCE: [Source 1, Page X]
+
+Now generate the quiz strictly in that format:
+"""
     
     ollama_available = check_ollama()
     
@@ -421,17 +449,33 @@ def create_template_tf(context):
 def create_template_open(topic, context):
     """Create an open-ended fill-in-the-blank question"""
     c = context[0]
-    # Pick a short phrase to blank out
-    words = [w for w in c['text'].split() if len(w) > 4]
-    blank = words[0] if words else '____'
-    question = f"Fill in the blank: According to {c['source']}, page {c.get('page','N/A')}, the key term is: ____"
-    # Provide expected answer as the blank term (best-effort)
-    answer = blank
+    # Use the first meaningful sentence and blank a keyword
+    import re
+    sentences = [s.strip() for s in re.split(r'[\.\n]', c['text']) if len(s.strip()) > 30]
+    if sentences:
+        sent = sentences[0]
+    else:
+        sent = c['text'][:120]
+
+    # choose a candidate word to blank (long/technical term)
+    words = [w for w in re.findall(r"\w+", sent) if len(w) > 5]
+    keyword = words[0] if words else None
+
+    if keyword:
+        # replace only first occurrence (case-insensitive)
+        pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+        sentence_with_blank = pattern.sub('____', sent, count=1)
+        question = f"Fill in the blank: {sentence_with_blank}"
+        expected = keyword
+    else:
+        question = f"Fill in the blank: {sent} ____"
+        expected = ''
+
     return {
         'question': question,
         'options': [],
-        'correct': answer,
-        'explanation': f"See {c['source']}, page {c.get('page','N/A')}: {c['text'][:200]}",
+        'correct': expected,
+        'explanation': f"See {c['source']}, page {c.get('page','N/A')}: {sent[:200]}",
         'source': c['source'],
         'page': c.get('page', 0),
         'type': 'open'
@@ -458,9 +502,17 @@ def parse_quiz(text, context):
             question_text = []
             options = []
             correct = None
+            qtype = None
+            source = None
             explanation = ""
             
             i = 0
+            # Read TYPE if present on first lines
+            while i < len(lines) and lines[i].strip() == '':
+                i += 1
+            if i < len(lines) and lines[i].strip().upper().startswith('TYPE:'):
+                qtype = lines[i].split(':',1)[1].strip().lower()
+                i += 1
             # Get question text
             while i < len(lines) and not lines[i].strip().startswith(('A)', 'B)', 'C)', 'D)')):
                 if lines[i].strip():
@@ -483,6 +535,10 @@ def parse_quiz(text, context):
                             explanation += " " + lines[i].strip()
                         i += 1
                     break
+                elif line.upper().startswith('TYPE:'):
+                    qtype = line.split(':',1)[1].strip().lower()
+                elif line.upper().startswith('SOURCE:'):
+                    source = line.split(':',1)[1].strip()
                 i += 1
             
             # Validate and add question
@@ -536,6 +592,11 @@ def parse_quiz(text, context):
                     }
 
             if q_obj:
+                # attach parsed type/source if LLM provided them
+                if qtype and 'type' not in q_obj:
+                    q_obj['type'] = qtype
+                if source and 'source' in q_obj and q_obj.get('source') == 'Unknown':
+                    q_obj['source'] = source
                 quiz.append(q_obj)
         except Exception as e:
             st.warning(f"Failed to parse question: {str(e)[:100]}")
