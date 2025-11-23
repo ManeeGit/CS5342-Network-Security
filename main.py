@@ -741,19 +741,15 @@ def main():
     if mode == "Quiz":
         st.header("Quiz Generator")
         
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            topic = st.text_input("Topic:", placeholder="e.g., TCP Protocol")
-        with col2:
-            num_q = st.slider("Questions:", 1, 10, 5)
+        topic = st.text_input("Topic:", placeholder="e.g., TCP Protocol, RSA Encryption")
         
         if st.button("Generate Quiz", type="primary"):
             if topic:
-                with st.spinner("Generating..."):
+                with st.spinner("Generating 5-question quiz..."):
                     context, src_type = get_context(topic, collection)
                     
                     if context:
-                        quiz = generate_quiz(topic, context, num_q)
+                        quiz = generate_quiz(topic, context, 5)
                         st.session_state.quiz = quiz
                         st.session_state.quiz_context = context
                         st.session_state.src_type = src_type
