@@ -474,34 +474,45 @@ def create_template_tf(context):
 def create_template_open(topic, context):
     """Create an open-ended fill-in-the-blank question"""
     c = context[0]
-    # Use the first meaningful sentence and blank a keyword
     import re
-    sentences = [s.strip() for s in re.split(r'[\.\n]', c['text']) if len(s.strip()) > 30]
-    if sentences:
-        sent = sentences[0]
+
+    # Pick a meaningful sentence from context (prefer longer, informative sentences)
+    sentences = [s.strip() for s in re.split(r'[\.\n]', c.get('text', '') or '') if len(s.strip()) > 30]
+    sent = sentences[0] if sentences else (c.get('text', '') or '').strip()
+    if not sent:
+        # fallback to source or topic
+        sent = c.get('source', '') or topic or 'Complete the following'
+
+    # Choose candidate keyword: prefer long/technical words, else longest word, else topic
+    words = re.findall(r"\w+", sent)
+    candidates = [w for w in words if len(w) > 5]
+    if candidates:
+        keyword = candidates[0]
+    elif words:
+        keyword = max(words, key=len)
     else:
-        sent = c['text'][:120]
+        keyword = (topic.split()[0] if topic and len(topic.split()) > 0 else 'answer')
 
-    # choose a candidate word to blank (long/technical term)
-    words = [w for w in re.findall(r"\w+", sent) if len(w) > 5]
-    keyword = words[0] if words else None
+    # Avoid numeric or trivial keyword
+    if keyword.isdigit() or len(keyword) < 2:
+        keyword = (topic.split()[0] if topic else 'answer')
 
-    if keyword:
-        # replace only first occurrence (case-insensitive)
+    # Replace only first occurrence (case-insensitive), safe fallback
+    try:
         pattern = re.compile(re.escape(keyword), re.IGNORECASE)
         sentence_with_blank = pattern.sub('____', sent, count=1)
-        question = f"Fill in the blank: {sentence_with_blank}"
-        expected = keyword
-    else:
-        question = f"Fill in the blank: {sent} ____"
-        expected = ''
+    except Exception:
+        sentence_with_blank = sent + ' ____'
+
+    # Build the question including a clear citation
+    question = f"Fill in the blank: {sentence_with_blank} (See: {c.get('source','Unknown')}, p.{c.get('page','N/A')})"
 
     return {
         'question': question,
         'options': [],
-        'correct': expected,
-        'explanation': f"See {c['source']}, page {c.get('page','N/A')}: {sent[:200]}",
-        'source': c['source'],
+        'correct': keyword,
+        'explanation': f"See {c.get('source','Unknown')}, page {c.get('page','N/A')}: {sent[:300]}",
+        'source': c.get('source','Unknown'),
         'page': c.get('page', 0),
         'type': 'open'
     }
