@@ -426,7 +426,8 @@ def create_template_quiz(topic, context, num_q):
     
     for i in range(min(num_q, len(context))):
         ctx = context[i]
-        text = ctx['text']
+        raw_text = ctx.get('text', '')
+        text = sanitize_text(raw_text)
         
         # Extract sentences
         sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 30]
@@ -437,7 +438,7 @@ def create_template_quiz(topic, context, num_q):
         main_fact = sentences[0]
         
         # Create question
-        question = f"According to {ctx['source']} (page {ctx['page']}), {topic}:"
+        question = f"According to {ctx.get('source','Unknown')} (page {ctx.get('page','N/A')}), {topic}:"
         
         # Create options with variations
         options = [
@@ -451,9 +452,9 @@ def create_template_quiz(topic, context, num_q):
             'question': question,
             'options': options,
             'correct': 'A',
-            'explanation': f"Based on {ctx['source']}, page {ctx['page']}: {main_fact}",
-            'source': ctx['source'],
-            'page': ctx['page']
+            'explanation': f"Based on {ctx.get('source','Unknown')}, page {ctx.get('page','N/A')}: {main_fact}",
+            'source': ctx.get('source','Unknown'),
+            'page': ctx.get('page','N/A')
             ,'type': 'mcq'
         })
     
@@ -466,9 +467,9 @@ def create_template_quiz(topic, context, num_q):
             "D) Unclear from sources"
         ],
         'correct': 'A',
-        'explanation': f"See {context[0]['source']}, page {context[0]['page']}",
-        'source': context[0]['source'],
-        'page': context[0]['page']
+        'explanation': f"See {context[0].get('source','Unknown')}, page {context[0].get('page','N/A')}",
+        'source': context[0].get('source','Unknown'),
+        'page': context[0].get('page','N/A')
         ,'type': 'mcq'
     }]
 
@@ -477,9 +478,10 @@ def create_template_tf(context):
     """Create a True/False question from context"""
     # Use first chunk as basis
     c = context[0]
-    # Try to derive a simple fact sentence
-    text = c['text'].strip().split('.')
-    fact = text[0] if text and text[0] else c['text'][:120]
+    raw = c.get('text','')
+    s = sanitize_text(raw)
+    text = s.split('.')
+    fact = text[0] if text and text[0] else s[:120]
 
     question = f"True or False: {fact.strip()}"
     options = ["A) True", "B) False"]
@@ -488,8 +490,8 @@ def create_template_tf(context):
         'question': question,
         'options': options,
         'correct': 'A',
-        'explanation': f"See {c['source']}, page {c.get('page','N/A')}.",
-        'source': c['source'],
+        'explanation': f"See {c.get('source','Unknown')}, page {c.get('page','N/A')}.",
+        'source': c.get('source','Unknown'),
         'page': c.get('page', 0),
         'type': 'tf'
     }
@@ -499,10 +501,13 @@ def create_template_open(topic, context):
     """Create an open-ended fill-in-the-blank question"""
     c = context[0]
     import re
+    # sanitize the context text
+    raw = c.get('text','')
+    s = sanitize_text(raw)
 
     # Pick a meaningful sentence from context (prefer longer, informative sentences)
-    sentences = [s.strip() for s in re.split(r'[\.\n]', c.get('text', '') or '') if len(s.strip()) > 30]
-    sent = sentences[0] if sentences else (c.get('text', '') or '').strip()
+    sentences = [ss.strip() for ss in re.split(r'[\.\n]', s or '') if len(ss.strip()) > 30]
+    sent = sentences[0] if sentences else (s or '').strip()
     if not sent:
         # fallback to source or topic
         sent = c.get('source', '') or topic or 'Complete the following'
@@ -594,7 +599,8 @@ def parse_quiz(text, context):
             # Get question text
             while i < len(lines) and not lines[i].strip().startswith(('A)', 'B)', 'C)', 'D)')):
                 if lines[i].strip():
-                    question_text.append(lines[i].strip())
+                    # sanitize question text line
+                    question_text.append(sanitize_text(lines[i].strip()))
                 i += 1
             
             # Get options
@@ -679,10 +685,16 @@ def parse_quiz(text, context):
                 if 'options' in q_obj and q_obj['options']:
                     clean_opts = []
                     for o in q_obj['options']:
+                        if not o:
+                            clean_opts.append(None)
+                            continue
                         o_clean = sanitize_text(o)
                         # collapse things like 'Step1' or 'Step 1' into a bad marker
-                        if re.match(r"^Step\s*\d+", o_clean, flags=re.IGNORECASE) or re.search(r"lecture|slides|\.pdf", o_clean, flags=re.IGNORECASE):
+                        if re.match(r"^Step\s*\d+", o_clean, flags=re.IGNORECASE) or re.search(r"lecture|slides|\.pdf", o_clean, flags=re.IGNORECASE) or o_clean.strip() == '':
                             o_clean = None
+                        # remove leading bullet-like characters
+                        if o_clean and o_clean.lstrip().startswith(('•','-','*')):
+                            o_clean = o_clean.lstrip('•-* ').strip()
                         clean_opts.append(o_clean)
                     # If any option is None or too short, mark question as bad to be replaced later
                     if any(co is None or len(co.strip()) < 3 for co in clean_opts):
