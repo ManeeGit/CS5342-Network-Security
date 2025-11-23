@@ -908,53 +908,44 @@ def main():
                     st.markdown(f"**{q['question']}**")
                     qtype = q.get('type', 'mcq')
                     if qtype in ['mcq', 'tf']:
-                        # Render radio options with a placeholder so nothing is selected by default
-                        opts = ["Select an answer"] + q.get('options', [])
-                        sel = st.radio(
+                        # Render radio options with no default selection (index=None)
+                        ans = st.radio(
                             "Select your answer:",
-                            opts,
+                            q.get('options', []),
                             key=f"q_{i}",
-                            index=0
+                            index=None
                         )
-                        # If placeholder chosen, store empty string to mark as unanswered
-                        if sel == "Select an answer":
-                            answers.append("")
-                        else:
-                            # normalize to letter (first character of option, e.g., 'A')
-                            answers.append(sel[0] if len(sel) > 0 else "")
+                        # Extract letter from selected option (e.g., 'A' from 'A) ...')
+                        answers.append(ans[0] if ans and len(ans) > 0 else None)
                     elif qtype == 'open':
                         # Render text input for open-ended / fill-in-the-blank
                         ans = st.text_input("Your answer:", key=f"q_{i}_open")
                         answers.append(ans.strip() if ans else "")
                     else:
-                        # Fallback to radio with placeholder
-                        opts = ["Select an answer"] + q.get('options', [])
-                        sel = st.radio(
+                        # Fallback to radio with no default
+                        ans = st.radio(
                             "Select your answer:",
-                            opts,
+                            q.get('options', []),
                             key=f"q_{i}",
-                            index=0
+                            index=None
                         )
-                        if sel == "Select an answer":
-                            answers.append("")
-                        else:
-                            answers.append(sel[0] if len(sel) > 0 else "")
+                        answers.append(ans[0] if ans and len(ans) > 0 else None)
                 
                 submitted = st.form_submit_button("Submit Answers", type="primary")
                 
                 if submitted:
                     # Validate all answers present
-                    missing = False
+                    missing_indices = []
                     for i, q in enumerate(quiz):
                         qtype = q.get('type', 'mcq')
                         a = answers[i]
                         if qtype in ['mcq', 'tf'] and (a is None or a == ''):
-                            missing = True
-                        if qtype == 'open' and (a is None or a.strip() == ''):
-                            missing = True
+                            missing_indices.append(i+1)
+                        if qtype == 'open' and (a is None or str(a).strip() == ''):
+                            missing_indices.append(i+1)
 
-                    if missing:
-                        st.warning("Please answer all questions before submitting")
+                    if missing_indices:
+                        st.warning(f"Please answer all questions before submitting. Missing: Question(s) {', '.join(map(str, missing_indices))}")
                     else:
                         score, feedback = grade_answers(quiz, answers)
                         st.markdown(f"## Score: {score}/{len(quiz)}")
