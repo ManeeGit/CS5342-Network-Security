@@ -14,6 +14,25 @@ import requests
 import wikipedia
 
 
+# ----------------------
+# Text sanitization helper
+# ----------------------
+def sanitize_text(t: str) -> str:
+    """Clean raw text extracted from PDFs or web to remove bullets, odd chars, and collapse whitespace."""
+    import re
+    if not t:
+        return ""
+    # remove common bullet characters and leading bullets at line starts
+    t = re.sub(r"^[\s\u2022\-\*]+", "", t, flags=re.MULTILINE)
+    # remove stray bullets inside text
+    t = t.replace('\u2022', ' ').replace('•', ' ')
+    # collapse multiple whitespace/newlines
+    t = re.sub(r"\s+", " ", t)
+    # strip weird leading/trailing punctuation
+    t = t.strip(' \n\t\r\f\v\u2022\u2023.,:;-')
+    return t
+
+
 # Configuration
 SOURCE_DIR = "Source"
 VECTOR_DB_DIR = "./vectordb"
@@ -284,8 +303,9 @@ def generate_quiz(topic, context, num_q=5):
     # Build numbered context blocks so LLM can cite like [Source 1, Page X]
     context_blocks = []
     for idx, c in enumerate(context[:6], start=1):
-        excerpt = c['text'][:800].replace('\n', ' ')
-        context_blocks.append(f"[Source {idx}] {c['source']}, Page {c.get('page','N/A')}:\n{excerpt}")
+        raw = c.get('text', '') or ''
+        excerpt = sanitize_text(raw[:800])
+        context_blocks.append(f"[Source {idx}] {c.get('source','Unknown')}, Page {c.get('page','N/A')}:\n{excerpt}")
     context_text = "\n\n".join(context_blocks)
     
     prompt = f"""You are a quiz generator. Based on the following context about "{topic}", create {num_q} multiple choice questions.
@@ -326,6 +346,10 @@ REQUIREMENTS:
 - For `mcq` include options A) B) C) D). For `tf` include options `A) True` and `B) False`. For `open` include no options and put the expected answer in `CORRECT:` as the text answer.
 - Always include a `SOURCE:` line that cites the context like `[Source 1, Page X]` (use the source numbers provided in the CONTEXT block).
 - Follow this exact machine-parsable format for every question (no extra commentary):
+ - Options must be meaningful natural-language choices. Do NOT output step labels like `Step1`, `Step2`, or file names such as `Lecture_13_slides` as options.
+ - Avoid single-word placeholders (e.g., `encryption`) for open answers where possible; prefer multi-word technical phrases or clearly defined terms from the context.
+ - Keep options as descriptive short phrases (2-10 words) for readability.
+ - For `mcq` include options A) B) C) D). For `tf` include options `A) True` and `B) False`. For `open` include no options and put the expected answer in `CORRECT:` as the text answer.
 
 QUESTION [number]:
 TYPE: [mcq|tf|open]
@@ -373,15 +397,15 @@ Now generate the quiz strictly in that format:
                             if any(tok.lower() in opt.lower() for tok in ['lecture', 'slides', '.pdf', 'lecture_']):
                                 bad = True
                                 break
-                    if bad:
-                        # replace with a template MCQ based on context
-                        repl = create_template_quiz(topic, context, 1)
-                        if repl:
-                            r = repl[0]
-                            r['type'] = 'mcq'
-                            cleaned.append(r)
-                        else:
-                            cleaned.append(q)
+                        if bad:
+                            # replace with a template MCQ based on context
+                            repl = create_template_quiz(topic, context, 1)
+                            if repl:
+                                r = repl[0]
+                                r['type'] = 'mcq'
+                                cleaned.append(r)
+                            else:
+                                cleaned.append(q)
                     else:
                         cleaned.append(q)
 
@@ -651,6 +675,20 @@ def parse_quiz(text, context):
                     q_obj['type'] = qtype
                 if source and 'source' in q_obj and q_obj.get('source') == 'Unknown':
                     q_obj['source'] = source
+                # sanitize options text to remove bullets and file-like labels
+                if 'options' in q_obj and q_obj['options']:
+                    clean_opts = []
+                    for o in q_obj['options']:
+                        o_clean = sanitize_text(o)
+                        # collapse things like 'Step1' or 'Step 1' into a bad marker
+                        if re.match(r"^Step\s*\d+", o_clean, flags=re.IGNORECASE) or re.search(r"lecture|slides|\.pdf", o_clean, flags=re.IGNORECASE):
+                            o_clean = None
+                        clean_opts.append(o_clean)
+                    # If any option is None or too short, mark question as bad to be replaced later
+                    if any(co is None or len(co.strip()) < 3 for co in clean_opts):
+                        q_obj['bad_options'] = True
+                    else:
+                        q_obj['options'] = [co for co in clean_opts]
                 quiz.append(q_obj)
         except Exception as e:
             st.warning(f"Failed to parse question: {str(e)[:100]}")
