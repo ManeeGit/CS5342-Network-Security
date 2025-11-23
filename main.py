@@ -279,7 +279,8 @@ def generate_with_ollama(prompt, model="qwen2.5:7b-instruct"):
 
 def generate_quiz(topic, context, num_q=5):
     """Generate quiz with LLM"""
-    
+    # Ensure minimum questions to include required types
+    num_q = max(num_q, 3)
     context_text = "\n\n".join([
         f"[Source: {c['source']}, Page {c['page']}]\n{c['text'][:600]}"
         for c in context[:3]
@@ -319,6 +320,18 @@ Now generate the quiz:"""
             parsed = parse_quiz(response, context)
             if parsed and len(parsed) > 0:
                 st.success(f"Generated {len(parsed)} questions from LLM")
+                # Ensure minimum composition: at least 2 True/False and 1 open-ended
+                tf_count = sum(1 for q in parsed if q.get('type') == 'tf')
+                open_count = sum(1 for q in parsed if q.get('type') == 'open')
+                additions = []
+                if tf_count < 2:
+                    for _ in range(2 - tf_count):
+                        additions.append(create_template_tf(context))
+                if open_count < 1:
+                    additions.append(create_template_open(topic, context))
+
+                if additions:
+                    parsed.extend(additions)
                 return parsed
             else:
                 st.warning("Failed to parse LLM output. Using template quiz.")
@@ -364,6 +377,7 @@ def create_template_quiz(topic, context, num_q):
             'explanation': f"Based on {ctx['source']}, page {ctx['page']}: {main_fact}",
             'source': ctx['source'],
             'page': ctx['page']
+            ,'type': 'mcq'
         })
     
     return quiz if quiz else [{
@@ -378,7 +392,50 @@ def create_template_quiz(topic, context, num_q):
         'explanation': f"See {context[0]['source']}, page {context[0]['page']}",
         'source': context[0]['source'],
         'page': context[0]['page']
+        ,'type': 'mcq'
     }]
+
+
+def create_template_tf(context):
+    """Create a True/False question from context"""
+    # Use first chunk as basis
+    c = context[0]
+    # Try to derive a simple fact sentence
+    text = c['text'].strip().split('.')
+    fact = text[0] if text and text[0] else c['text'][:120]
+
+    question = f"True or False: {fact.strip()}"
+    options = ["A) True", "B) False"]
+    # Assume True as correct for template (user should verify)
+    return {
+        'question': question,
+        'options': options,
+        'correct': 'A',
+        'explanation': f"See {c['source']}, page {c.get('page','N/A')}.",
+        'source': c['source'],
+        'page': c.get('page', 0),
+        'type': 'tf'
+    }
+
+
+def create_template_open(topic, context):
+    """Create an open-ended fill-in-the-blank question"""
+    c = context[0]
+    # Pick a short phrase to blank out
+    words = [w for w in c['text'].split() if len(w) > 4]
+    blank = words[0] if words else '____'
+    question = f"Fill in the blank: According to {c['source']}, page {c.get('page','N/A')}, the key term is: ____"
+    # Provide expected answer as the blank term (best-effort)
+    answer = blank
+    return {
+        'question': question,
+        'options': [],
+        'correct': answer,
+        'explanation': f"See {c['source']}, page {c.get('page','N/A')}: {c['text'][:200]}",
+        'source': c['source'],
+        'page': c.get('page', 0),
+        'type': 'open'
+    }
 
 
 def parse_quiz(text, context):
@@ -429,15 +486,57 @@ def parse_quiz(text, context):
                 i += 1
             
             # Validate and add question
-            if question_text and len(options) >= 4 and correct in ['A', 'B', 'C', 'D']:
-                quiz.append({
-                    'question': ' '.join(question_text),
-                    'options': options[:4],
-                    'correct': correct,
-                    'explanation': explanation if explanation else "See context above.",
-                    'source': context[0]['source'] if context else "Unknown",
-                    'page': context[0]['page'] if context else 0
-                })
+            q_obj = None
+            if question_text:
+                q_text = ' '.join(question_text)
+                # Determine type: mcq, tf, open
+                if len(options) >= 4 and correct in ['A', 'B', 'C', 'D']:
+                    q_obj = {
+                        'question': q_text,
+                        'options': options[:4],
+                        'correct': correct,
+                        'explanation': explanation if explanation else "See context above.",
+                        'source': context[0]['source'] if context else "Unknown",
+                        'page': context[0]['page'] if context else 0,
+                        'type': 'mcq'
+                    }
+                elif any('True' in o or 'False' in o for o in options):
+                    # True/False question
+                    # Normalize to A) True, B) False
+                    opt_true = next((o for o in options if 'True' in o), 'A) True')
+                    opt_false = next((o for o in options if 'False' in o), 'B) False')
+                    corr = None
+                    if correct and ('TRUE' in correct or 'T' == correct):
+                        corr = 'A'
+                    elif correct and ('FALSE' in correct or 'F' == correct):
+                        corr = 'B'
+                    else:
+                        # try to read CORRECT: A/B
+                        corr = correct if correct in ['A', 'B'] else 'A'
+
+                    q_obj = {
+                        'question': q_text,
+                        'options': [f"A) True", f"B) False"],
+                        'correct': corr,
+                        'explanation': explanation if explanation else "See context above.",
+                        'source': context[0]['source'] if context else "Unknown",
+                        'page': context[0]['page'] if context else 0,
+                        'type': 'tf'
+                    }
+                elif (not options) and correct and len(correct) > 0:
+                    # Open-ended question where CORRECT contains the answer text
+                    q_obj = {
+                        'question': q_text,
+                        'options': [],
+                        'correct': correct.strip(),
+                        'explanation': explanation if explanation else "See context above.",
+                        'source': context[0]['source'] if context else "Unknown",
+                        'page': context[0]['page'] if context else 0,
+                        'type': 'open'
+                    }
+
+            if q_obj:
+                quiz.append(q_obj)
         except Exception as e:
             st.warning(f"Failed to parse question: {str(e)[:100]}")
             continue
@@ -457,21 +556,57 @@ def grade_answers(quiz, answers):
     for i, (q, ans) in enumerate(zip(quiz, answers)):
         correct = q['correct']
         question_num = i + 1
-        
-        if ans == correct:
-            score += 1
-            source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
-            feedback.append(f"**Question {question_num}: CORRECT**\n{q['explanation']}\n*Source: {source_ref}*")
+        qtype = q.get('type', 'mcq')
+        if qtype in ['mcq', 'tf']:
+            if ans == correct:
+                score += 1
+                source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
+                feedback.append(f"**Question {question_num}: CORRECT**\n{q['explanation']}\n*Source: {source_ref}*")
+            else:
+                correct_option = [opt for opt in q.get('options', []) if opt.startswith(correct + ')')]
+                correct_option = correct_option[0] if correct_option else correct
+                source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
+                feedback.append(
+                    f"**Question {question_num}: INCORRECT**\n"
+                    f"Your answer: {ans}\n"
+                    f"Correct answer: {correct_option}\n"
+                    f"{q['explanation']}\n"
+                    f"*Source: {source_ref}*"
+                )
+        elif qtype == 'open':
+            # Simple string/token overlap check for open answers
+            user = (ans or '').strip().lower()
+            expected = (correct or '').strip().lower()
+            is_correct = False
+            if not expected:
+                is_correct = False
+            elif user == expected:
+                is_correct = True
+            else:
+                user_tokens = set([t.strip('.,') for t in user.split() if t])
+                exp_tokens = set([t.strip('.,') for t in expected.split() if t])
+                if len(exp_tokens) > 0:
+                    overlap = len(user_tokens & exp_tokens) / len(exp_tokens)
+                    is_correct = overlap >= 0.6
+
+            if is_correct:
+                score += 1
+                source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
+                feedback.append(f"**Question {question_num}: CORRECT**\n{q['explanation']}\n*Source: {source_ref}*")
+            else:
+                source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
+                feedback.append(
+                    f"**Question {question_num}: INCORRECT**\n"
+                    f"Your answer: {ans}\n"
+                    f"Expected: {correct}\n"
+                    f"{q.get('explanation','')}\n"
+                    f"*Source: {source_ref}*"
+                )
         else:
-            correct_option = [opt for opt in q['options'] if opt.startswith(correct + ')')][0] if q['options'] else "N/A"
-            source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
-            feedback.append(
-                f"**Question {question_num}: INCORRECT**\n"
-                f"Your answer: {ans}\n"
-                f"Correct answer: {correct_option}\n"
-                f"{q['explanation']}\n"
-                f"*Source: {source_ref}*"
-            )
+            # Default fallback
+            if ans == correct:
+                score += 1
+            feedback.append(f"**Question {question_num}: Reviewed**\n{q.get('explanation','')}\n")
     
     return score, feedback
 
@@ -601,19 +736,44 @@ def main():
                 for i, q in enumerate(quiz):
                     st.markdown(f"### Question {i+1}")
                     st.markdown(f"**{q['question']}**")
-                    
-                    ans = st.radio(
-                        "Select your answer:",
-                        q['options'],
-                        key=f"q_{i}",
-                        index=None
-                    )
-                    answers.append(ans[0] if ans else None)
+                    qtype = q.get('type', 'mcq')
+                    if qtype in ['mcq', 'tf']:
+                        # Render radio options (options should start with letter)
+                        ans = st.radio(
+                            "Select your answer:",
+                            q['options'],
+                            key=f"q_{i}",
+                            index=None
+                        )
+                        answers.append(ans[0] if ans else None)
+                    elif qtype == 'open':
+                        # Render text input for open-ended / fill-in-the-blank
+                        ans = st.text_input("Your answer:", key=f"q_{i}_open")
+                        answers.append(ans.strip() if ans else "")
+                    else:
+                        # Fallback to radio
+                        ans = st.radio(
+                            "Select your answer:",
+                            q.get('options', []),
+                            key=f"q_{i}",
+                            index=None
+                        )
+                        answers.append(ans[0] if ans else None)
                 
                 submitted = st.form_submit_button("Submit Answers", type="primary")
                 
                 if submitted:
-                    if None in answers:
+                    # Validate all answers present
+                    missing = False
+                    for i, q in enumerate(quiz):
+                        qtype = q.get('type', 'mcq')
+                        a = answers[i]
+                        if qtype in ['mcq', 'tf'] and (a is None or a == ''):
+                            missing = True
+                        if qtype == 'open' and (a is None or a.strip() == ''):
+                            missing = True
+
+                    if missing:
                         st.warning("Please answer all questions before submitting")
                     else:
                         score, feedback = grade_answers(quiz, answers)
