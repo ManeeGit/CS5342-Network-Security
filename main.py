@@ -14,25 +14,6 @@ import requests
 import wikipedia
 
 
-# ----------------------
-# Text sanitization helper
-# ----------------------
-def sanitize_text(t: str) -> str:
-    """Clean raw text extracted from PDFs or web to remove bullets, odd chars, and collapse whitespace."""
-    import re
-    if not t:
-        return ""
-    # remove common bullet characters and leading bullets at line starts
-    t = re.sub(r"^[\s\u2022\-\*]+", "", t, flags=re.MULTILINE)
-    # remove stray bullets inside text
-    t = t.replace('\u2022', ' ').replace('•', ' ')
-    # collapse multiple whitespace/newlines
-    t = re.sub(r"\s+", " ", t)
-    # strip weird leading/trailing punctuation
-    t = t.strip(' \n\t\r\f\v\u2022\u2023.,:;-')
-    return t
-
-
 # Configuration
 SOURCE_DIR = "Source"
 VECTOR_DB_DIR = "./vectordb"
@@ -296,210 +277,69 @@ def generate_with_ollama(prompt, model="qwen2.5:7b-instruct"):
 # Quiz Generation
 # ============================================================================
 
-def extract_key_concepts(context, topic):
-    """Extract key concepts and facts from context for quiz generation"""
-    concepts = []
-    for c in context[:10]:
-        text = sanitize_text(c.get('text', ''))
-        sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 20]
-        for sent in sentences[:3]:
-            if any(kw.lower() in sent.lower() for kw in topic.split()):
-                concepts.append({
-                    'sentence': sent,
-                    'source': c.get('source', 'Unknown'),
-                    'page': c.get('page', 'N/A')
-                })
-    return concepts
-
-
 def generate_quiz(topic, context, num_q=5):
-    """Generate high-quality quiz using structured approach"""
-    # Ensure minimum questions to include required types
-    num_q = max(num_q, 3)
-    # Extract key concepts from context
-    concepts = extract_key_concepts(context, topic)
+    """Generate quiz with LLM - includes MCQ, True/False, and Fill-in-the-blank"""
     
-    if not concepts:
-        # Fallback to template quiz if no concepts found
-        st.warning("No relevant concepts found. Generating template quiz.")
-        return create_template_quiz(topic, context, num_q)
+    context_text = "\n\n".join([
+        f"[Source: {c['source']}, Page {c['page']}]\n{c['text'][:600]}"
+        for c in context[:3]
+    ])
     
-    # Build numbered context blocks for LLM fallback
-    context_blocks = []
-    for idx, c in enumerate(context[:6], start=1):
-        raw = c.get('text', '') or ''
-        excerpt = sanitize_text(raw[:800])
-        context_blocks.append(f"[Source {idx}] {c.get('source','Unknown')}, Page {c.get('page','N/A')}:\n{excerpt}")
-    context_text = "\n\n".join(context_blocks)
+    # Calculate question distribution
+    num_mcq = max(1, num_q - 3)  # At least 1 MCQ
+    num_tf = 2  # Exactly 2 True/False
+    num_fib = 1  # Exactly 1 Fill-in-the-blank
     
-    # Simplified LLM prompt for better quality
-    prompt = f"""Create {num_q} quiz questions about \"{topic}\" using ONLY the context below.
+    prompt = f"""You are a quiz generator. Based on the following context about "{topic}", create a quiz with different question types.
 
 CONTEXT:
 {context_text}
 
-REQUIREMENTS:
-- Produce at least 2 True/False questions (type `tf`) and at least 1 open-ended fill-in-the-blank question (type `open`) among the {num_q} questions.
-- Remaining questions may be multiple-choice (`mcq`) with four options A/B/C/D and exactly one correct answer.
-- Use ONLY information present in the CONTEXT. Do NOT invent facts.
-- For each question include an explicit TYPE line: `TYPE: mcq` or `TYPE: tf` or `TYPE: open`.
-- For `mcq` include options A) B) C) D). For `tf` include options `A) True` and `B) False`. For `open` include no options and put the expected answer in `CORRECT:` as the text answer.
-- Always include a `SOURCE:` line that cites the context like `[Source 1, Page X]` (use the source numbers provided in the CONTEXT block).
-- Follow this exact machine-parsable format for every question (no extra commentary):
- - Options must be meaningful natural-language choices. Do NOT output step labels like `Step1`, `Step2`, or file names such as `Lecture_13_slides` as options.
- - Avoid single-word placeholders (e.g., `encryption`) for open answers where possible; prefer multi-word technical phrases or clearly defined terms from the context.
- - Keep options as descriptive short phrases (2-10 words) for readability.
- - For `mcq` include options A) B) C) D). For `tf` include options `A) True` and `B) False`. For `open` include no options and put the expected answer in `CORRECT:` as the text answer.
+INSTRUCTIONS:
+Create exactly {num_mcq} multiple choice questions, {num_tf} true/false questions, and {num_fib} fill-in-the-blank question.
 
-QUESTION [number]:
-TYPE: [mcq|tf|open]
-[Question text]
-A) [Option A]    (only for mcq or tf)
-B) [Option B]    (only for mcq or tf)
-C) [Option C]    (only for mcq)
-D) [Option D]    (only for mcq)
-CORRECT: [A/B/C/D] or for TF use A or B, for OPEN use the exact expected answer text
-EXPLANATION: [Short explanation and cite SOURCE]
-SOURCE: [Source 1, Page X]
+For MULTIPLE CHOICE questions, use this format:
+QUESTION [number]: MCQ
+[Your question text here]
+A) [Option A]
+B) [Option B]
+C) [Option C]
+D) [Option D]
+CORRECT: [A/B/C/D]
+EXPLANATION: [Why this is correct and which page/source it comes from]
 
-Now generate the quiz strictly in that format:
-"""
+---
+
+For TRUE/FALSE questions, use this format:
+QUESTION [number]: TF
+[Your statement here]
+A) True
+B) False
+CORRECT: [A/B]
+EXPLANATION: [Why this is correct and which page/source it comes from]
+
+---
+
+For FILL-IN-THE-BLANK questions, use this format:
+QUESTION [number]: FIB
+[Your sentence with _____ for the blank]
+CORRECT: [The exact word(s) that fill the blank]
+EXPLANATION: [Context and which page/source it comes from]
+
+---
+
+Now generate the quiz:"""
     
-    # Generate structured quiz from concepts
-    quiz = []
-    
-    # Calculate how many of each type we need
-    num_tf = min(2, num_q)  # At least 2 TF questions
-    num_open = min(1, num_q - num_tf)  # At least 1 open question
-    num_mcq = num_q - num_tf - num_open  # Rest are MCQ
-    
-    # Generate True/False questions (always generate num_tf questions)
-    for i in range(num_tf):
-        if i < len(concepts):
-            c = concepts[i]
-            quiz.append({
-                'question': f"{c['sentence'].strip()}",
-                'options': ["A) True", "B) False"],
-                'correct': 'A',
-                'explanation': f"This statement is from {c['source']}, page {c['page']}.",
-                'source': c['source'],
-                'page': c['page'],
-                'type': 'tf'
-            })
-        else:
-            # Fallback: create TF from template
-            quiz.append(create_template_tf(context))
-    
-    # Generate MCQ questions (always generate num_mcq questions)
-    mcq_start = num_tf
-    for i in range(num_mcq):
-        idx = mcq_start + i
-        if idx < len(concepts):
-            c = concepts[idx]
-            sent = c['sentence']
-            # Create question by asking what the statement describes
-            words = sent.split()
-            if len(words) > 10:
-                question = f"According to {c['source']}, which statement about {topic} is correct?"
-            else:
-                question = f"What does {c['source']} say about {topic}?"
-            
-            quiz.append({
-                'question': question,
-                'options': [
-                    f"A) {sent[:100]}...",
-                    "B) This is not discussed in the source",
-                    "C) The opposite is stated",
-                    "D) The source provides different information"
-                ],
-                'correct': 'A',
-                'explanation': f"See {c['source']}, page {c['page']}: {sent}",
-                'source': c['source'],
-                'page': c['page'],
-                'type': 'mcq'
-            })
-        else:
-            # Fallback: create MCQ from template
-            temp_mcq = create_template_quiz(topic, context, 1)
-            if temp_mcq:
-                quiz.append(temp_mcq[0])
-    
-    # Generate open-ended question (always generate num_open questions)
-    for i in range(num_open):
-        quiz.append(create_template_open(topic, context))
-    
-    # At this point, quiz should have exactly num_q questions
-    if len(quiz) == num_q:
-        return quiz
-    
-    # Try LLM enhancement if available and we still need more
     ollama_available = check_ollama()
     
-    if ollama_available and len(quiz) < num_q:
-        st.info("Enhancing quiz with LLM...")
+    if ollama_available:
+        st.info("Generating quiz with local LLM (qwen2.5:7b-instruct)...")
         response = generate_with_ollama(prompt)
         if response:
-            parsed = parse_quiz(response, context)
+            parsed = parse_quiz(response, context, num_q)
             if parsed and len(parsed) > 0:
                 st.success(f"Generated {len(parsed)} questions from LLM")
-                # Ensure minimum composition: at least 2 True/False and 1 open-ended
-                tf_count = sum(1 for q in parsed if q.get('type') == 'tf')
-                open_count = sum(1 for q in parsed if q.get('type') == 'open')
-                additions = []
-                if tf_count < 2:
-                    for _ in range(2 - tf_count):
-                        additions.append(create_template_tf(context))
-                if open_count < 1:
-                    additions.append(create_template_open(topic, context))
-
-                if additions:
-                    parsed.extend(additions)
-
-                # Validate parsed questions: avoid options that are just filenames or source names
-                cleaned = []
-                for q in parsed:
-                    bad = False
-                    if q.get('type') == 'mcq':
-                        for opt in q.get('options', []):
-                            # if option contains 'Lecture' or 'slides' or 'Lecture_' treat as bad
-                            if any(tok.lower() in opt.lower() for tok in ['lecture', 'slides', '.pdf', 'lecture_']):
-                                bad = True
-                                break
-                        if bad:
-                            # replace with a template MCQ based on context
-                            repl = create_template_quiz(topic, context, 1)
-                            if repl:
-                                r = repl[0]
-                                r['type'] = 'mcq'
-                                cleaned.append(r)
-                            else:
-                                cleaned.append(q)
-                    else:
-                        cleaned.append(q)
-
-                # Ensure we have exactly num_q questions
-                if len(cleaned) > num_q:
-                    # Trim excess while keeping required types
-                    tf_qs = [q for q in cleaned if q.get('type') == 'tf']
-                    open_qs = [q for q in cleaned if q.get('type') == 'open']
-                    mcq_qs = [q for q in cleaned if q.get('type') == 'mcq']
-                    
-                    final = []
-                    final.extend(tf_qs[:2])  # Keep 2 TF
-                    final.extend(open_qs[:1])  # Keep 1 open
-                    remaining = num_q - len(final)
-                    final.extend(mcq_qs[:remaining])  # Fill rest with MCQ
-                    cleaned = final
-                elif len(cleaned) < num_q:
-                    # Pad with additional MCQs from template
-                    needed = num_q - len(cleaned)
-                    extra_mcqs = create_template_quiz(topic, context, needed)
-                    for extra in extra_mcqs[:needed]:
-                        if extra.get('type') != 'tf' and extra.get('type') != 'open':
-                            extra['type'] = 'mcq'
-                    cleaned.extend(extra_mcqs[:needed])
-
-                return cleaned
+                return parsed
             else:
                 st.warning("Failed to parse LLM output. Using template quiz.")
         else:
@@ -511,16 +351,17 @@ Now generate the quiz strictly in that format:
 
 
 def create_template_quiz(topic, context, num_q):
-    """Generate quiz from context content"""
+    """Generate quiz from context content with MCQ, TF, and FIB questions"""
     quiz = []
-    context_idx = 0
     
-    while len(quiz) < num_q and context_idx < len(context):
-        ctx = context[context_idx]
-        context_idx += 1
-        
-        raw_text = ctx.get('text', '')
-        text = sanitize_text(raw_text)
+    num_mcq = max(1, num_q - 3)
+    num_tf = 2
+    num_fib = 1
+    
+    # Generate MCQ questions
+    for i in range(min(num_mcq, len(context))):
+        ctx = context[i]
+        text = ctx['text']
         
         # Extract sentences
         sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 30]
@@ -531,7 +372,7 @@ def create_template_quiz(topic, context, num_q):
         main_fact = sentences[0]
         
         # Create question
-        question = f"According to {ctx.get('source','Unknown')} (page {ctx.get('page','N/A')}), {topic}:"
+        question = f"According to {ctx['source']} (page {ctx['page']}), what is stated about {topic}?"
         
         # Create options with variations
         options = [
@@ -542,157 +383,72 @@ def create_template_quiz(topic, context, num_q):
         ]
         
         quiz.append({
+            'type': 'MCQ',
             'question': question,
             'options': options,
             'correct': 'A',
-            'explanation': f"Based on {ctx.get('source','Unknown')}, page {ctx.get('page','N/A')}: {main_fact}",
-            'source': ctx.get('source','Unknown'),
-            'page': ctx.get('page','N/A')
-            ,'type': 'mcq'
+            'explanation': f"Based on {ctx['source']}, page {ctx['page']}: {main_fact}",
+            'source': ctx['source'],
+            'page': ctx['page']
         })
     
-    # If no quiz generated, create a fallback question
-    if not quiz:
-        quiz = [{
-            'question': f"What information is available about {topic}?",
-            'options': [
-                f"A) {sanitize_text(context[0].get('text','')[:150])}...",
-                "B) No information found",
-                "C) Conflicting information",
-                "D) Unclear from sources"
-            ],
-            'correct': 'A',
-            'explanation': f"See {context[0].get('source','Unknown')}, page {context[0].get('page','N/A')}",
-            'source': context[0].get('source','Unknown'),
-            'page': context[0].get('page','N/A'),
-            'type': 'mcq'
-        }]
-    
-    # Ensure at least 2 TF and 1 open if num_q allows
-    if num_q >= 3:
-        tf_count = sum(1 for q in quiz if q.get('type') == 'tf')
-        open_count = sum(1 for q in quiz if q.get('type') == 'open')
+    # Generate True/False questions
+    for i in range(min(num_tf, len(context))):
+        ctx = context[min(i + num_mcq, len(context) - 1)]
+        sentences = [s.strip() for s in ctx['text'].split('.') if len(s.strip()) > 20]
         
-        # Add required TF questions
-        while tf_count < 2 and len(quiz) < num_q:
-            quiz.append(create_template_tf(context))
-            tf_count += 1
-        
-        # Add required open question
-        if open_count < 1 and len(quiz) < num_q:
-            quiz.append(create_template_open(topic, context))
+        if sentences:
+            statement = sentences[0][:200]
+            quiz.append({
+                'type': 'TF',
+                'question': statement,
+                'options': ['A) True', 'B) False'],
+                'correct': 'A',
+                'explanation': f"This statement is true according to {ctx['source']}, page {ctx['page']}",
+                'source': ctx['source'],
+                'page': ctx['page']
+            })
     
-    # Trim to exactly num_q if we exceeded
-    if len(quiz) > num_q:
-        # Prioritize keeping required types (2 TF, 1 open)
-        tf_questions = [q for q in quiz if q.get('type') == 'tf']
-        open_questions = [q for q in quiz if q.get('type') == 'open']
-        mcq_questions = [q for q in quiz if q.get('type') == 'mcq']
-        
-        # Keep at least 2 TF and 1 open, fill rest with MCQ
-        final = []
-        final.extend(tf_questions[:2])
-        final.extend(open_questions[:1])
-        remaining = num_q - len(final)
-        final.extend(mcq_questions[:remaining])
-        quiz = final
+    # Generate Fill-in-the-blank question
+    if len(context) > 0:
+        ctx = context[0]
+        sentences = [s.strip() for s in ctx['text'].split('.') if len(s.strip()) > 30]
+        if sentences:
+            sentence = sentences[0]
+            words = sentence.split()
+            if len(words) > 5:
+                # Replace a key word with blank
+                blank_idx = len(words) // 2
+                blank_word = words[blank_idx]
+                words[blank_idx] = '_____'
+                quiz.append({
+                    'type': 'FIB',
+                    'question': ' '.join(words),
+                    'options': [],
+                    'correct': blank_word.strip('.,!?;:'),
+                    'explanation': f"The complete sentence from {ctx['source']}, page {ctx['page']}: {sentence}",
+                    'source': ctx['source'],
+                    'page': ctx['page']
+                })
     
-    return quiz
-
-
-def create_template_tf(context):
-    """Create a True/False question from context"""
-    # Use first chunk as basis
-    c = context[0]
-    raw = c.get('text','')
-    s = sanitize_text(raw)
-    text = s.split('.')
-    fact = text[0] if text and text[0] else s[:120]
-
-    question = f"True or False: {fact.strip()}"
-    options = ["A) True", "B) False"]
-    # Assume True as correct for template (user should verify)
-    return {
-        'question': question,
-        'options': options,
+    return quiz if quiz else [{
+        'type': 'MCQ',
+        'question': f"What information is available about {topic}?",
+        'options': [
+            f"A) {context[0]['text'][:150]}...",
+            "B) No information found",
+            "C) Conflicting information",
+            "D) Unclear from sources"
+        ],
         'correct': 'A',
-        'explanation': f"See {c.get('source','Unknown')}, page {c.get('page','N/A')}.",
-        'source': c.get('source','Unknown'),
-        'page': c.get('page', 0),
-        'type': 'tf'
-    }
+        'explanation': f"See {context[0]['source']}, page {context[0]['page']}",
+        'source': context[0]['source'],
+        'page': context[0]['page']
+    }]
 
 
-def create_template_open(topic, context):
-    """Create an open-ended fill-in-the-blank question"""
-    c = context[0]
-    import re
-    # sanitize the context text
-    raw = c.get('text','')
-    s = sanitize_text(raw)
-
-    # Pick a meaningful sentence from context (prefer longer, informative sentences)
-    sentences = [ss.strip() for ss in re.split(r'[\.\n]', s or '') if len(ss.strip()) > 30]
-    sent = sentences[0] if sentences else (s or '').strip()
-    if not sent:
-        # fallback to source or topic
-        sent = c.get('source', '') or topic or 'Complete the following'
-
-
-    # Choose candidate phrase: prefer multi-word technical phrases (2-3 words) located after first two tokens
-    words = re.findall(r"\w+", sent)
-    keyword = None
-    # search for 3-word then 2-word windows where words are reasonably long
-    for window in (3, 2):
-        for i in range(2, max(0, len(words) - window + 1)):
-            w = words[i:i+window]
-            if all(len(x) > 3 for x in w) and any(len(x) > 5 for x in w):
-                keyword = ' '.join(w)
-                break
-        if keyword:
-            break
-
-    # fallback to single long word (not in first two tokens)
-    if not keyword:
-        candidates = [w for idx, w in enumerate(words) if idx > 1 and len(w) > 5]
-        if candidates:
-            keyword = candidates[0]
-        elif words:
-            keyword = max(words, key=len)
-        else:
-            keyword = (topic.split()[0] if topic and len(topic.split()) > 0 else 'answer')
-
-    # Avoid numeric or trivial keyword
-    if isinstance(keyword, str) and (keyword.isdigit() or len(keyword) < 2):
-        keyword = (topic.split()[0] if topic else 'answer')
-
-    # Replace only first occurrence (case-insensitive), safe fallback
-    try:
-        pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-        sentence_with_blank = pattern.sub('____', sent, count=1)
-    except Exception:
-        sentence_with_blank = sent + ' ____'
-
-    # If the blank is at the very start or results in an unhelpful fragment,
-    # rephrase to include the full sentence for context; do NOT include inline filename citation
-    if sentence_with_blank.strip().startswith('____') or len(sentence_with_blank.split()) < 4:
-        question = f"Fill in the blank: In the sentence '{sent}', the missing term is: ____"
-    else:
-        question = f"Fill in the blank: {sentence_with_blank}"
-
-    return {
-        'question': question,
-        'options': [],
-        'correct': keyword,
-        'explanation': f"See {c.get('source','Unknown')}, page {c.get('page','N/A')}: {sent[:300]}",
-        'source': c.get('source','Unknown'),
-        'page': c.get('page', 0),
-        'type': 'open'
-    }
-
-
-def parse_quiz(text, context):
-    """Parse LLM output into structured quiz format"""
+def parse_quiz(text, context, num_q):
+    """Parse LLM output into structured quiz format with MCQ, TF, and FIB support"""
     import re
     
     quiz = []
@@ -706,128 +462,96 @@ def parse_quiz(text, context):
             # Split by separator if present
             block = block.split('---')[0].strip()
             
+            # Determine question type
+            q_type = 'MCQ'  # default
+            if block.startswith('TF'):
+                q_type = 'TF'
+                block = block[2:].strip()
+            elif block.startswith('FIB'):
+                q_type = 'FIB'
+                block = block[3:].strip()
+            elif block.startswith('MCQ'):
+                block = block[3:].strip()
+            
             # Extract question (everything before first option)
             lines = block.split('\n')
             question_text = []
             options = []
             correct = None
-            qtype = None
-            source = None
             explanation = ""
             
             i = 0
-            # Read TYPE if present on first lines
-            while i < len(lines) and lines[i].strip() == '':
-                i += 1
-            if i < len(lines) and lines[i].strip().upper().startswith('TYPE:'):
-                qtype = lines[i].split(':',1)[1].strip().lower()
-                i += 1
             # Get question text
-            while i < len(lines) and not lines[i].strip().startswith(('A)', 'B)', 'C)', 'D)')):
+            while i < len(lines) and not lines[i].strip().startswith(('A)', 'B)', 'C)', 'D)', 'CORRECT:')):
                 if lines[i].strip():
-                    # sanitize question text line
-                    question_text.append(sanitize_text(lines[i].strip()))
+                    question_text.append(lines[i].strip())
                 i += 1
             
-            # Get options
-            while i < len(lines):
-                line = lines[i].strip()
-                if line.startswith(('A)', 'B)', 'C)', 'D)')):
-                    options.append(line)
-                elif line.startswith('CORRECT:'):
-                    correct = line.split(':', 1)[1].strip().upper()
-                elif line.startswith('EXPLANATION:'):
-                    explanation = line.split(':', 1)[1].strip()
-                    # Get rest of explanation
-                    i += 1
-                    while i < len(lines) and not lines[i].strip().startswith('QUESTION'):
-                        if lines[i].strip():
-                            explanation += " " + lines[i].strip()
+            # Get options (for MCQ and TF)
+            if q_type in ['MCQ', 'TF']:
+                while i < len(lines):
+                    line = lines[i].strip()
+                    if line.startswith(('A)', 'B)', 'C)', 'D)')):
+                        options.append(line)
+                    elif line.startswith('CORRECT:'):
+                        correct = line.split(':', 1)[1].strip().upper()
+                    elif line.startswith('EXPLANATION:'):
+                        explanation = line.split(':', 1)[1].strip()
+                        # Get rest of explanation
                         i += 1
-                    break
-                elif line.upper().startswith('TYPE:'):
-                    qtype = line.split(':',1)[1].strip().lower()
-                elif line.upper().startswith('SOURCE:'):
-                    source = line.split(':',1)[1].strip()
-                i += 1
+                        while i < len(lines) and not lines[i].strip().startswith('QUESTION'):
+                            if lines[i].strip():
+                                explanation += " " + lines[i].strip()
+                            i += 1
+                        break
+                    i += 1
+            else:  # FIB - just get correct answer and explanation
+                while i < len(lines):
+                    line = lines[i].strip()
+                    if line.startswith('CORRECT:'):
+                        correct = line.split(':', 1)[1].strip()
+                    elif line.startswith('EXPLANATION:'):
+                        explanation = line.split(':', 1)[1].strip()
+                        i += 1
+                        while i < len(lines) and not lines[i].strip().startswith('QUESTION'):
+                            if lines[i].strip():
+                                explanation += " " + lines[i].strip()
+                            i += 1
+                        break
+                    i += 1
             
             # Validate and add question
-            q_obj = None
-            if question_text:
-                q_text = ' '.join(question_text)
-                # Determine type: mcq, tf, open
-                if len(options) >= 4 and correct in ['A', 'B', 'C', 'D']:
-                    q_obj = {
-                        'question': q_text,
+            if question_text and correct:
+                if q_type == 'MCQ' and len(options) >= 4 and correct in ['A', 'B', 'C', 'D']:
+                    quiz.append({
+                        'type': 'MCQ',
+                        'question': ' '.join(question_text),
                         'options': options[:4],
                         'correct': correct,
                         'explanation': explanation if explanation else "See context above.",
                         'source': context[0]['source'] if context else "Unknown",
-                        'page': context[0]['page'] if context else 0,
-                        'type': 'mcq'
-                    }
-                elif any('True' in o or 'False' in o for o in options):
-                    # True/False question
-                    # Normalize to A) True, B) False
-                    opt_true = next((o for o in options if 'True' in o), 'A) True')
-                    opt_false = next((o for o in options if 'False' in o), 'B) False')
-                    corr = None
-                    if correct and ('TRUE' in correct or 'T' == correct):
-                        corr = 'A'
-                    elif correct and ('FALSE' in correct or 'F' == correct):
-                        corr = 'B'
-                    else:
-                        # try to read CORRECT: A/B
-                        corr = correct if correct in ['A', 'B'] else 'A'
-
-                    q_obj = {
-                        'question': q_text,
-                        'options': [f"A) True", f"B) False"],
-                        'correct': corr,
+                        'page': context[0]['page'] if context else 0
+                    })
+                elif q_type == 'TF' and len(options) >= 2 and correct in ['A', 'B']:
+                    quiz.append({
+                        'type': 'TF',
+                        'question': ' '.join(question_text),
+                        'options': options[:2],
+                        'correct': correct,
                         'explanation': explanation if explanation else "See context above.",
                         'source': context[0]['source'] if context else "Unknown",
-                        'page': context[0]['page'] if context else 0,
-                        'type': 'tf'
-                    }
-                elif (not options) and correct and len(correct) > 0:
-                    # Open-ended question where CORRECT contains the answer text
-                    q_obj = {
-                        'question': q_text,
+                        'page': context[0]['page'] if context else 0
+                    })
+                elif q_type == 'FIB' and correct:
+                    quiz.append({
+                        'type': 'FIB',
+                        'question': ' '.join(question_text),
                         'options': [],
-                        'correct': correct.strip(),
+                        'correct': correct,
                         'explanation': explanation if explanation else "See context above.",
                         'source': context[0]['source'] if context else "Unknown",
-                        'page': context[0]['page'] if context else 0,
-                        'type': 'open'
-                    }
-
-            if q_obj:
-                # attach parsed type/source if LLM provided them
-                if qtype and 'type' not in q_obj:
-                    q_obj['type'] = qtype
-                if source and 'source' in q_obj and q_obj.get('source') == 'Unknown':
-                    q_obj['source'] = source
-                # sanitize options text to remove bullets and file-like labels
-                if 'options' in q_obj and q_obj['options']:
-                    clean_opts = []
-                    for o in q_obj['options']:
-                        if not o:
-                            clean_opts.append(None)
-                            continue
-                        o_clean = sanitize_text(o)
-                        # collapse things like 'Step1' or 'Step 1' into a bad marker
-                        if re.match(r"^Step\s*\d+", o_clean, flags=re.IGNORECASE) or re.search(r"lecture|slides|\.pdf", o_clean, flags=re.IGNORECASE) or o_clean.strip() == '':
-                            o_clean = None
-                        # remove leading bullet-like characters
-                        if o_clean and o_clean.lstrip().startswith(('•','-','*')):
-                            o_clean = o_clean.lstrip('•-* ').strip()
-                        clean_opts.append(o_clean)
-                    # If any option is None or too short, mark question as bad to be replaced later
-                    if any(co is None or len(co.strip()) < 3 for co in clean_opts):
-                        q_obj['bad_options'] = True
-                    else:
-                        q_obj['options'] = [co for co in clean_opts]
-                quiz.append(q_obj)
+                        'page': context[0]['page'] if context else 0
+                    })
         except Exception as e:
             st.warning(f"Failed to parse question: {str(e)[:100]}")
             continue
@@ -840,64 +564,47 @@ def parse_quiz(text, context):
 
 
 def grade_answers(quiz, answers):
-    """Grade quiz answers with detailed feedback"""
+    """Grade quiz answers with detailed feedback - supports MCQ, TF, and FIB"""
     score = 0
     feedback = []
     
     for i, (q, ans) in enumerate(zip(quiz, answers)):
         correct = q['correct']
         question_num = i + 1
-        qtype = q.get('type', 'mcq')
-        if qtype in ['mcq', 'tf']:
-            if ans == correct:
-                score += 1
-                source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
-                feedback.append(f"**Question {question_num}: CORRECT**\n{q['explanation']}\n*Source: {source_ref}*")
-            else:
-                correct_option = [opt for opt in q.get('options', []) if opt.startswith(correct + ')')]
-                correct_option = correct_option[0] if correct_option else correct
-                source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
+        q_type = q.get('type', 'MCQ')
+        
+        # Check if correct
+        is_correct = False
+        if q_type == 'FIB':
+            # Case-insensitive comparison for fill-in-the-blank
+            is_correct = ans and ans.strip().lower() == correct.strip().lower()
+        else:
+            is_correct = ans == correct
+        
+        if is_correct:
+            score += 1
+            source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
+            feedback.append(f"**Question {question_num}: CORRECT**\n{q['explanation']}\n*Source: {source_ref}*")
+        else:
+            source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
+            
+            if q_type == 'FIB':
                 feedback.append(
                     f"**Question {question_num}: INCORRECT**\n"
-                    f"Your answer: {ans}\n"
+                    f"Your answer: {ans if ans else '(blank)'}\n"
+                    f"Correct answer: {correct}\n"
+                    f"{q['explanation']}\n"
+                    f"*Source: {source_ref}*"
+                )
+            else:
+                correct_option = [opt for opt in q['options'] if opt.startswith(correct + ')')][0] if q['options'] else correct
+                feedback.append(
+                    f"**Question {question_num}: INCORRECT**\n"
+                    f"Your answer: {ans if ans else '(not answered)'}\n"
                     f"Correct answer: {correct_option}\n"
                     f"{q['explanation']}\n"
                     f"*Source: {source_ref}*"
                 )
-        elif qtype == 'open':
-            # Simple string/token overlap check for open answers
-            user = (ans or '').strip().lower()
-            expected = (correct or '').strip().lower()
-            is_correct = False
-            if not expected:
-                is_correct = False
-            elif user == expected:
-                is_correct = True
-            else:
-                user_tokens = set([t.strip('.,') for t in user.split() if t])
-                exp_tokens = set([t.strip('.,') for t in expected.split() if t])
-                if len(exp_tokens) > 0:
-                    overlap = len(user_tokens & exp_tokens) / len(exp_tokens)
-                    is_correct = overlap >= 0.6
-
-            if is_correct:
-                score += 1
-                source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
-                feedback.append(f"**Question {question_num}: CORRECT**\n{q['explanation']}\n*Source: {source_ref}*")
-            else:
-                source_ref = f"[{q.get('source', 'Unknown')}, Page {q.get('page', 'N/A')}]"
-                feedback.append(
-                    f"**Question {question_num}: INCORRECT**\n"
-                    f"Your answer: {ans}\n"
-                    f"Expected: {correct}\n"
-                    f"{q.get('explanation','')}\n"
-                    f"*Source: {source_ref}*"
-                )
-        else:
-            # Default fallback
-            if ans == correct:
-                score += 1
-            feedback.append(f"**Question {question_num}: Reviewed**\n{q.get('explanation','')}\n")
     
     return score, feedback
 
@@ -1011,12 +718,7 @@ def main():
                         st.session_state.quiz = quiz
                         st.session_state.quiz_context = context
                         st.session_state.src_type = src_type
-                        # Reset answers and any previous question widgets to avoid retained selections
-                        st.session_state.user_answers = {}
-                        # Remove any keys that start with quiz question widget prefixes
-                        keys_to_remove = [k for k in list(st.session_state.keys()) if str(k).startswith('q_')]
-                        for k in keys_to_remove:
-                            del st.session_state[k]
+                        st.session_state.user_answers = {}  # Reset answers
                         st.rerun()
         
         # Display quiz if available (OUTSIDE button condition)
@@ -1030,48 +732,43 @@ def main():
             with st.form("quiz_form"):
                 answers = []
                 for i, q in enumerate(quiz):
-                    st.markdown(f"### Question {i+1}")
+                    q_type = q.get('type', 'MCQ')
+                    st.markdown(f"### Question {i+1} ({q_type})")
                     st.markdown(f"**{q['question']}**")
-                    qtype = q.get('type', 'mcq')
-                    if qtype in ['mcq', 'tf']:
-                        # Render radio options with no default selection (index=None)
-                        ans = st.radio(
-                            "Select your answer:",
-                            q.get('options', []),
+                    
+                    if q_type == 'FIB':
+                        # Fill-in-the-blank: text input
+                        ans = st.text_input(
+                            "Your answer:",
                             key=f"q_{i}",
-                            index=None
+                            placeholder="Type your answer here"
                         )
-                        # Extract letter from selected option (e.g., 'A' from 'A) ...')
-                        answers.append(ans[0] if ans and len(ans) > 0 else None)
-                    elif qtype == 'open':
-                        # Render text input for open-ended / fill-in-the-blank
-                        ans = st.text_input("Your answer:", key=f"q_{i}_open")
-                        answers.append(ans.strip() if ans else "")
+                        answers.append(ans)
                     else:
-                        # Fallback to radio with no default
+                        # MCQ and TF: radio buttons
                         ans = st.radio(
                             "Select your answer:",
-                            q.get('options', []),
+                            q['options'],
                             key=f"q_{i}",
                             index=None
                         )
-                        answers.append(ans[0] if ans and len(ans) > 0 else None)
+                        answers.append(ans[0] if ans else None)
                 
                 submitted = st.form_submit_button("Submit Answers", type="primary")
                 
                 if submitted:
-                    # Validate all answers present
-                    missing_indices = []
-                    for i, q in enumerate(quiz):
-                        qtype = q.get('type', 'mcq')
-                        a = answers[i]
-                        if qtype in ['mcq', 'tf'] and (a is None or a == ''):
-                            missing_indices.append(i+1)
-                        if qtype == 'open' and (a is None or str(a).strip() == ''):
-                            missing_indices.append(i+1)
-
-                    if missing_indices:
-                        st.warning(f"Please answer all questions before submitting. Missing: Question(s) {', '.join(map(str, missing_indices))}")
+                    # Check if all questions are answered
+                    unanswered = []
+                    for i, (q, ans) in enumerate(zip(quiz, answers)):
+                        if q.get('type') == 'FIB':
+                            if not ans or not ans.strip():
+                                unanswered.append(i + 1)
+                        else:
+                            if ans is None:
+                                unanswered.append(i + 1)
+                    
+                    if unanswered:
+                        st.warning(f"Please answer all questions before submitting. Unanswered: {unanswered}")
                     else:
                         score, feedback = grade_answers(quiz, answers)
                         st.markdown(f"## Score: {score}/{len(quiz)}")
@@ -1087,13 +784,9 @@ def main():
                         st.markdown(f"- **{c['source']}** (Page {c['page']})")
             
             if st.button("New Quiz"):
-                # Clear main quiz state and any question widget keys
                 for key in ['quiz', 'quiz_context', 'user_answers', 'src_type']:
                     if key in st.session_state:
                         del st.session_state[key]
-                keys_to_remove = [k for k in list(st.session_state.keys()) if str(k).startswith('q_')]
-                for k in keys_to_remove:
-                    del st.session_state[k]
                 st.rerun()
     
     # Tutor Mode
