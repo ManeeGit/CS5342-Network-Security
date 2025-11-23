@@ -281,8 +281,8 @@ def generate_quiz(topic, context, num_q=5):
     """Generate quiz with LLM - includes MCQ, True/False, and Fill-in-the-blank"""
     
     context_text = "\n\n".join([
-        f"[Source: {c['source']}, Page {c['page']}]\n{c['text'][:600]}"
-        for c in context[:3]
+        f"[Source: {c['source']}, Page {c['page']}]\n{c['text'][:1000]}"
+        for c in context[:5]
     ])
     
     # Calculate question distribution
@@ -290,45 +290,62 @@ def generate_quiz(topic, context, num_q=5):
     num_tf = 2  # Exactly 2 True/False
     num_fib = 1  # Exactly 1 Fill-in-the-blank
     
-    prompt = f"""You are a quiz generator. Based on the following context about "{topic}", create a quiz with different question types.
+    prompt = f"""You are an expert quiz generator. Create a high-quality quiz about "{topic}" using ONLY the information from the context below. Do NOT make up information.
 
 CONTEXT:
 {context_text}
 
-INSTRUCTIONS:
-Create exactly {num_mcq} multiple choice questions, {num_tf} true/false questions, and {num_fib} fill-in-the-blank question.
+CRITICAL RULES:
+1. Extract SPECIFIC facts, definitions, and technical details from the context
+2. Use EXACT terminology and numbers from the sources
+3. Create CLEAR, UNAMBIGUOUS questions
+4. Make wrong options plausible but clearly incorrect
+5. For True/False: use complete factual statements from the context
+6. For Fill-in-the-blank: remove ONE key technical term or number
 
-For MULTIPLE CHOICE questions, use this format:
+GENERATE {num_mcq} multiple choice, {num_tf} true/false, and {num_fib} fill-in-the-blank question.
+
+FORMAT FOR MULTIPLE CHOICE:
 QUESTION [number]: MCQ
-[Your question text here]
-A) [Option A]
-B) [Option B]
-C) [Option C]
-D) [Option D]
-CORRECT: [A/B/C/D]
-EXPLANATION: [Why this is correct and which page/source it comes from]
+What is [specific technical aspect] of {topic}?
+A) [Correct answer with specific details from context]
+B) [Plausible wrong answer]
+C) [Plausible wrong answer]
+D) [Plausible wrong answer]
+CORRECT: A
+EXPLANATION: According to [Source], page [X]: [Quote the relevant sentence]
 
 ---
 
-For TRUE/FALSE questions, use this format:
+FORMAT FOR TRUE/FALSE:
 QUESTION [number]: TF
-[Your statement here]
+[Complete factual statement extracted directly from the context]
 A) True
 B) False
-CORRECT: [A/B]
-EXPLANATION: [Why this is correct and which page/source it comes from]
+CORRECT: A
+EXPLANATION: This is true according to [Source], page [X]: [Quote supporting text]
 
 ---
 
-For FILL-IN-THE-BLANK questions, use this format:
+FORMAT FOR FILL-IN-THE-BLANK:
 QUESTION [number]: FIB
-[Your sentence with _____ for the blank]
-CORRECT: [The exact word(s) that fill the blank]
-EXPLANATION: [Context and which page/source it comes from]
+[Copy a sentence from context but replace ONE key technical term with _____]
+CORRECT: [The exact term that was removed]
+EXPLANATION: Complete sentence from [Source], page [X]: [Full original sentence]
 
 ---
 
-Now generate the quiz:"""
+EXAMPLE MCQ:
+QUESTION 1: MCQ
+What is the key size used in AES-128?
+A) 128 bits
+B) 64 bits
+C) 256 bits
+D) 192 bits
+CORRECT: A
+EXPLANATION: According to Network-security-essentials, page 45: AES-128 uses a 128-bit key.
+
+Now generate the quiz with SPECIFIC details from the context:"""
     
     ollama_available = check_ollama()
     
@@ -351,35 +368,40 @@ Now generate the quiz:"""
 
 
 def create_template_quiz(topic, context, num_q):
-    """Generate quiz from context content with MCQ, TF, and FIB questions"""
+    """Generate high-quality quiz from context content with MCQ, TF, and FIB questions"""
     quiz = []
     
     num_mcq = max(1, num_q - 3)
     num_tf = 2
     num_fib = 1
     
-    # Generate MCQ questions
+    # Generate MCQ questions - extract specific facts
     for i in range(min(num_mcq, len(context))):
         ctx = context[i]
         text = ctx['text']
         
-        # Extract sentences
-        sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 30]
-        if len(sentences) < 2:
+        # Extract complete sentences with technical content
+        sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 40 and any(char.isupper() for char in s)]
+        if len(sentences) < 1:
             continue
         
-        # Use first meaningful sentence as basis
-        main_fact = sentences[0]
+        # Use the most informative sentence
+        main_fact = sentences[0] if len(sentences[0]) < 200 else sentences[0][:197] + "..."
         
-        # Create question
-        question = f"According to {ctx['source']} (page {ctx['page']}), what is stated about {topic}?"
+        # Extract a key term to make question about
+        words = main_fact.split()
+        key_terms = [w for w in words if len(w) > 4 and w[0].isupper()]
+        topic_word = key_terms[0] if key_terms else topic
         
-        # Create options with variations
+        # Create specific question
+        question = f"Based on {ctx['source']} (page {ctx['page']}), which statement about {topic} is correct?"
+        
+        # Create more realistic options
         options = [
-            f"A) {main_fact[:150]}" if len(main_fact) > 150 else f"A) {main_fact}",
-            f"B) Is not discussed in this context",
-            f"C) Is mentioned but with different details",
-            f"D) Contradicts the source material"
+            f"A) {main_fact}",
+            f"B) {topic} is not mentioned in the security literature",
+            f"C) {topic} has been deprecated and is no longer used",
+            f"D) The documentation provides contradictory information about {topic}"
         ]
         
         quiz.append({
@@ -387,46 +409,62 @@ def create_template_quiz(topic, context, num_q):
             'question': question,
             'options': options,
             'correct': 'A',
-            'explanation': f"Based on {ctx['source']}, page {ctx['page']}: {main_fact}",
+            'explanation': f"Correct. The source states: '{main_fact}' ({ctx['source']}, page {ctx['page']})",
             'source': ctx['source'],
             'page': ctx['page']
         })
     
-    # Generate True/False questions
+    # Generate True/False questions - use factual statements
     for i in range(min(num_tf, len(context))):
-        ctx = context[min(i + num_mcq, len(context) - 1)]
-        sentences = [s.strip() for s in ctx['text'].split('.') if len(s.strip()) > 20]
+        ctx_idx = min(i + num_mcq, len(context) - 1)
+        ctx = context[ctx_idx]
+        sentences = [s.strip() for s in ctx['text'].split('.') if 30 < len(s.strip()) < 150]
         
         if sentences:
-            statement = sentences[0][:200]
+            # Pick a clear factual statement
+            statement = sentences[0]
             quiz.append({
                 'type': 'TF',
-                'question': statement,
+                'question': f"{statement}.",
                 'options': ['A) True', 'B) False'],
                 'correct': 'A',
-                'explanation': f"This statement is true according to {ctx['source']}, page {ctx['page']}",
+                'explanation': f"True. This is stated in {ctx['source']}, page {ctx['page']}",
                 'source': ctx['source'],
                 'page': ctx['page']
             })
     
-    # Generate Fill-in-the-blank question
+    # Generate Fill-in-the-blank question - remove technical term
     if len(context) > 0:
         ctx = context[0]
-        sentences = [s.strip() for s in ctx['text'].split('.') if len(s.strip()) > 30]
+        sentences = [s.strip() for s in ctx['text'].split('.') if 40 < len(s.strip()) < 150]
         if sentences:
             sentence = sentences[0]
             words = sentence.split()
-            if len(words) > 5:
-                # Replace a key word with blank
+            
+            # Find a good word to blank out (technical term or number)
+            blank_idx = -1
+            blank_word = ""
+            
+            # Prefer capitalized technical terms or numbers
+            for idx, word in enumerate(words):
+                if len(word) > 3 and (word[0].isupper() or word.isdigit()):
+                    blank_idx = idx
+                    blank_word = word
+                    break
+            
+            # Fallback to middle word
+            if blank_idx == -1 and len(words) > 5:
                 blank_idx = len(words) // 2
                 blank_word = words[blank_idx]
+            
+            if blank_idx >= 0:
                 words[blank_idx] = '_____'
                 quiz.append({
                     'type': 'FIB',
-                    'question': ' '.join(words),
+                    'question': ' '.join(words) + ".",
                     'options': [],
-                    'correct': blank_word.strip('.,!?;:'),
-                    'explanation': f"The complete sentence from {ctx['source']}, page {ctx['page']}: {sentence}",
+                    'correct': blank_word.strip('.,!?;:()[]'),
+                    'explanation': f"Complete sentence: '{sentence}' ({ctx['source']}, page {ctx['page']})",
                     'source': ctx['source'],
                     'page': ctx['page']
                 })
