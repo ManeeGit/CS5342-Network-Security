@@ -9,7 +9,7 @@ import fitz
 import os
 import json
 from pathlib import Path
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 import requests
 import wikipedia
 
