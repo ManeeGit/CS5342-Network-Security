@@ -845,27 +845,37 @@ def main():
                     st.markdown(f"**{q['question']}**")
                     qtype = q.get('type', 'mcq')
                     if qtype in ['mcq', 'tf']:
-                        # Render radio options (options should start with letter)
-                        ans = st.radio(
+                        # Render radio options with a placeholder so nothing is selected by default
+                        opts = ["Select an answer"] + q.get('options', [])
+                        sel = st.radio(
                             "Select your answer:",
-                            q['options'],
+                            opts,
                             key=f"q_{i}",
-                            index=None
+                            index=0
                         )
-                        answers.append(ans[0] if ans else None)
+                        # If placeholder chosen, store empty string to mark as unanswered
+                        if sel == "Select an answer":
+                            answers.append("")
+                        else:
+                            # normalize to letter (first character of option, e.g., 'A')
+                            answers.append(sel[0] if len(sel) > 0 else "")
                     elif qtype == 'open':
                         # Render text input for open-ended / fill-in-the-blank
                         ans = st.text_input("Your answer:", key=f"q_{i}_open")
                         answers.append(ans.strip() if ans else "")
                     else:
-                        # Fallback to radio
-                        ans = st.radio(
+                        # Fallback to radio with placeholder
+                        opts = ["Select an answer"] + q.get('options', [])
+                        sel = st.radio(
                             "Select your answer:",
-                            q.get('options', []),
+                            opts,
                             key=f"q_{i}",
-                            index=None
+                            index=0
                         )
-                        answers.append(ans[0] if ans else None)
+                        if sel == "Select an answer":
+                            answers.append("")
+                        else:
+                            answers.append(sel[0] if len(sel) > 0 else "")
                 
                 submitted = st.form_submit_button("Submit Answers", type="primary")
                 
