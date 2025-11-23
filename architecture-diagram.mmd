@@ -16,7 +16,7 @@ graph TB
     subgraph UI_LAYER["  STREAMLIT UI LAYER  "]
         direction LR
         
-        QUIZ_MODE["QUIZ MODE<br/><br/> Topic Input<br/> Question Count<br/> MCQ Form<br/> Auto Grading"]
+        QUIZ_MODE["QUIZ MODE<br/><br/> Topic Input<br/> Question Count<br/> 3 Question Types:<br/> MCQ + TF + FIB<br/> Auto Grading"]
         
         TUTOR_MODE["TUTOR MODE<br/><br/> Question Input<br/> Detailed Explanation<br/> Source Citations<br/> Content Preview"]
         
@@ -46,7 +46,7 @@ graph TB
         
         subgraph WEB_FALLBACK["WEB SEARCH FALLBACK"]
             direction TB
-            DUCKGO[" DuckDuckGo<br/><br/>Max Results: 5<br/>Score: 0.8"]
+            DUCKGO[" DuckDuckGo<br/><br/>Max Results: 10<br/>Score: 0.85"]
             WIKI[" Wikipedia<br/><br/>Max Articles: 3<br/>Score: 0.9"]
             
             style DUCKGO fill:#90CDF4,stroke:#4299E1,stroke-width:2px,color:#000,font-size:13px
@@ -70,21 +70,24 @@ graph TB
     subgraph GEN_LAYER["  INTELLIGENT GENERATION LAYER  "]
         direction TB
         
-        PROMPT_BUILD[" Prompt Engineering<br/><br/>Context + Instructions"]
+        QUIZ_FORMULA[" Quiz Composition<br/><br/>(num_q - 3) MCQ<br/>+ 2 True/False<br/>+ 1 Fill-in-blank"]
+        PROMPT_BUILD[" Prompt Engineering<br/><br/>5 Sources x 1000 chars<br/>Context + Instructions<br/>Quiz: MCQ/TF/FIB format"]
+        
+        style QUIZ_FORMULA fill:#E9D8FD,stroke:#805AD5,stroke-width:2px,color:#000,font-size:12px
         
         LLM_CHECK{" Ollama<br/>Available?"}
         
         subgraph LLM_PATH["AI GENERATION PATH"]
             direction TB
             OLLAMA[" OLLAMA LLM<br/><br/>Model: qwen2.5:7b-instruct<br/>Temp: 0.7 | Tokens: 2000<br/>Timeout: 120s"]
-            PARSE[" Response Parser<br/><br/>Extract Q&A<br/>Format Citations"]
+            PARSE[" Response Parser<br/><br/>Parse MCQ/TF/FIB<br/>Extract Q&A + Citations<br/>Case-insensitive matching"]
             
             style OLLAMA fill:#FC8181,stroke:#E53E3E,stroke-width:3px,color:#fff,font-size:13px
             style PARSE fill:#FBD38D,stroke:#ED8936,stroke-width:2px,color:#000
         end
         
         subgraph FALLBACK_PATH["FALLBACK PATH"]
-            TEMPLATE[" Template Mode<br/><br/>Extract from Context<br/>Basic Formatting"]
+            TEMPLATE[" Template Mode<br/><br/>Smart extraction:<br/>MCQ from facts<br/>TF from statements<br/>FIB from technical terms"]
             
             style TEMPLATE fill:#CBD5E0,stroke:#718096,stroke-width:2px,color:#000,font-size:13px
         end
@@ -140,7 +143,8 @@ graph TB
     DUCKGO -->|"Fail"| WIKI
     WIKI -->|"Success/Fail"| CONTEXT_READY
     
-    CONTEXT_READY --> PROMPT_BUILD
+    CONTEXT_READY --> QUIZ_FORMULA
+    QUIZ_FORMULA --> PROMPT_BUILD
     PROMPT_BUILD --> LLM_CHECK
     
     LLM_CHECK -->|" Running"| OLLAMA
