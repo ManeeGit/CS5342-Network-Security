@@ -3,8 +3,8 @@ Complete Local RAG System - Quiz Generator & Tutor
 Single file, robust, accurate with proper citations
 """
 
-import streamlit as st
-import chromadb
+import streamlit as st #UI
+import chromadb   #Vector DB
 import fitz #it is a PyMuPDF module
 import os
 import json
