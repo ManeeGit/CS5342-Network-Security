@@ -304,7 +304,7 @@ CRITICAL RULES:
 6. For Fill-in-the-blank: create natural sentences WITHOUT mentioning sources
 7. Keep source references ONLY in explanations, NOT in questions
 
-GENERATE {num_mcq} multiple choice, {num_tf} true/false, and {num_fib} fill-in-the-blank question.
+YOU MUST GENERATE EXACTLY {num_mcq} MULTIPLE CHOICE + {num_tf} TRUE/FALSE + {num_fib} FILL-IN-THE-BLANK = {num_q} TOTAL QUESTIONS.
 
 FORMAT FOR MULTIPLE CHOICE:
 QUESTION [number]: MCQ
@@ -350,22 +350,45 @@ Now generate the quiz with SPECIFIC details from the context:"""
     
     ollama_available = check_ollama()
     
-    if ollama_available:
-        st.info("Generating quiz with local LLM (qwen2.5:7b-instruct)...")
-        response = generate_with_ollama(prompt)
-        if response:
-            parsed = parse_quiz(response, context, num_q)
-            if parsed and len(parsed) > 0:
-                st.success(f"Generated {len(parsed)} questions from LLM")
-                return parsed
-            else:
-                st.warning("Failed to parse LLM output. Using template quiz.")
-        else:
-            st.warning("LLM generation failed. Using template quiz.")
-    else:
-        st.warning("Ollama not connected. Using template-based quiz.")
+    if not ollama_available:
+        st.error("Ollama is not running. Please start Ollama to generate contextual questions.")
+        st.info("Run: **ollama serve** in a terminal")
+        return None
     
-    return create_template_quiz(topic, context, num_q)
+    st.info("Generating quiz with local LLM (qwen2.5:7b-instruct)...")
+    
+    # Try up to 2 times to get all questions
+    for attempt in range(2):
+        response = generate_with_ollama(prompt)
+        
+        if not response:
+            st.error("LLM failed to generate response")
+            if attempt == 0:
+                st.info("Retrying...")
+                continue
+            return None
+        
+        parsed = parse_quiz(response, context, num_q)
+        
+        if parsed and len(parsed) >= num_q:
+            st.success(f"Generated {len(parsed)} contextual questions")
+            return parsed[:num_q]
+        elif parsed and len(parsed) > 0:
+            st.warning(f"LLM only generated {len(parsed)}/{num_q} questions")
+            if attempt == 0:
+                st.info("Retrying to get all 5 questions...")
+                continue
+            else:
+                st.error(f"Could only generate {len(parsed)} questions after 2 attempts")
+                return parsed  # Return what we got
+        else:
+            st.error("Failed to parse LLM output")
+            if attempt == 0:
+                st.info("Retrying...")
+                continue
+            return None
+    
+    return None
 
 
 def create_template_quiz(topic, context, num_q):
@@ -750,11 +773,16 @@ def main():
                     
                     if context:
                         quiz = generate_quiz(topic, context, 5)
-                        st.session_state.quiz = quiz
-                        st.session_state.quiz_context = context
-                        st.session_state.src_type = src_type
-                        st.session_state.user_answers = {}  # Reset answers
-                        st.rerun()
+                        if quiz and len(quiz) > 0:
+                            st.session_state.quiz = quiz
+                            st.session_state.quiz_context = context
+                            st.session_state.src_type = src_type
+                            st.session_state.user_answers = {}  # Reset answers
+                            st.rerun()
+                        else:
+                            st.error("Failed to generate quiz. Please ensure Ollama is running and try again.")
+                    else:
+                        st.error("No context found for this topic")
         
         # Display quiz if available (OUTSIDE button condition)
         if 'quiz' in st.session_state and st.session_state.quiz:
